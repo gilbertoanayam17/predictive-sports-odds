@@ -37,7 +37,7 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 9 | [x] | **Empaquetado** (`pyproject.toml`, `pip install -e .`, comando `predictive-odds`) | Instalación y reutilización triviales | — |
 | 10 | [x] | **Ajuste de hiperparámetros** con validación cronológica (vida media, peso del xG, prior, peso del ML); solo se cambian los valores por defecto si mejoran fuera de muestra | Mejor modelo, medido | 1 |
 | 11 | [x] | **Simulador de riesgo Monte Carlo**: distribución de bankroll, drawdown y riesgo de ruina según la fracción de Kelly y el tope de exposición | Elegir el staking con datos | 1 |
-| 12 | [ ] | **Informe diario exportable** (Markdown/HTML) con picks, parlays, stakes y avisos | Consumo fácil fuera de la terminal | — |
+| 12 | [x] | **Informe diario exportable** (Markdown/HTML) con picks, parlays, stakes y avisos | Consumo fácil fuera de la terminal | — |
 | 13 | [ ] | **Mercados extra**: Draw No Bet y hándicap asiático (con push/medio push) | Más oportunidades de valor | — |
 | 14 | [ ] | **Histórico de momios** (snapshots en SQLite) para medir el movimiento de línea y el CLV en vivo | CLV real sin depender del cierre de terceros | 6 |
 
@@ -58,3 +58,4 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 2026-11-04 | #9 Empaquetado | ver git log | `pyproject.toml` (extras `ui` y `dev`), CLI movido a `predictive_odds/cli.py`, comando `predictive-odds` verificado con instalación editable fuera del repo; versión 0.2.0 |
 | 2026-11-04 | #10 Ajuste de hiperparámetros | ver git log | `tuning.py` (rolling origin, rejilla de Poisson y peso del ML) + `--tune`. En la simulación la mejor configuración varía con la semilla (mejora ≈0.3%) y el ML no aporta (datos generados con Poisson) → valores por defecto SIN cambios; decidir con datos reales |
 | 2026-11-04 | #11 Riesgo Monte Carlo | ver git log | `risk.py` + `--risk`: fracción de Kelly × recorte del edge. Con ¼ de Kelly y el 10% de exposición, P(ruina) = 0% incluso con el modelo en contra; con Kelly completo, ≈36% → respalda los valores por defecto |
+| 2026-11-04 | #12 Informe exportable | ver git log | `report.py` + `--report archivo.md/.html`: HTML autocontenido (sin recursos externos, modo claro/oscuro, nombres escapados); verificado en móvil (390 px, sin desbordamiento horizontal) |

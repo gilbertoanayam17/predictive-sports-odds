@@ -13,6 +13,7 @@ python main.py                                  # EPL simulada: no necesita red 
 python main.py --league LIGA_MX --bankroll 5000
 python main.py --same-match                     # permite parlays con varias patas del mismo partido
 python main.py --backtest                       # backtest walk-forward: ROI, CLV, drawdown, calibración
+python main.py --report informe.html            # informe exportable (.html o .md); --risk añade el Monte Carlo
 python main.py --track bets.sqlite              # guarda las apuestas sugeridas (idempotente)
 python main.py --track bets.sqlite --settle --played-rounds 29   # liquida (en la simulación, juega la jornada 29)
 python -m pytest
@@ -43,6 +44,7 @@ predictive_odds/
 ├── xg_sources.py          # merge_xg (fusión de xG de cualquier fuente) + Understat (experimental)
 ├── tuning.py              # Ajuste de hiperparámetros con validación cronológica
 ├── risk.py                # Monte Carlo del bankroll: ruina, drawdown, fracción de Kelly
+├── report.py              # Informe exportable en Markdown o HTML autocontenido
 └── pipeline.py            # AnalysisPipeline.run() → AnalysisResult (DataFrames listos para UI)
 ├── cli.py                 # CLI (también como comando `predictive-odds`)
 main.py                    # Demo de punta a punta en la terminal (envoltorio del CLI)

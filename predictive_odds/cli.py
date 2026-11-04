@@ -39,6 +39,7 @@ from predictive_odds.backtester import BacktestConfig, Backtester, BacktestResul
 from predictive_odds.parlay_builder import ParlayConfig
 from predictive_odds.xg_sources import UnderstatProvider, XgEnrichedProvider
 from predictive_odds.statistical_models import InsufficientDataError
+from predictive_odds.report import save_report
 from predictive_odds.risk import RiskConfig, risk_table
 from predictive_odds.tuning import tune_ml_weight, tune_poisson
 from predictive_odds.pipeline import AnalysisPipeline, AnalysisResult, PipelineConfig
@@ -283,6 +284,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--model-path", default=None, help="Bundle .joblib: reutiliza modelos guardados y guarda al reentrenar")
     p.add_argument("--track", default=None, help="Registro SQLite: guarda las apuestas sugeridas del análisis")
     p.add_argument("--settle", action="store_true", help="Con --track: liquida pendientes y muestra el rendimiento")
+    p.add_argument("--report", default=None, help="Exportar el análisis a un archivo .md o .html")
     p.add_argument("--risk", action="store_true", help="Añadir simulación Monte Carlo de riesgo del bankroll")
     p.add_argument("--risk-rounds", type=int, default=38, help="Jornadas a simular en --risk")
     p.add_argument("--tune", action="store_true", help="Ajustar hiperparámetros con validación cronológica")
@@ -334,6 +336,12 @@ def main(argv: list[str] | None = None) -> int:
     print_report(result, simulated=not args.live)
     if args.risk:
         print_risk(result, args.risk_rounds)
+    if args.report:
+        try:
+            print(f"\nInforme guardado en {save_report(result, args.report, simulated=not args.live)}")
+        except (OSError, ValueError) as exc:
+            print(f"No se pudo guardar el informe: {exc}", file=sys.stderr)
+            return 7
     if args.track:
         try:
             with BetTracker(args.track) as tracker:
