@@ -15,6 +15,7 @@ from predictive_odds.parlay_builder import (
     ParlayBuilder,
     ParlayConfig,
     Pick,
+    ValueBetConfig,
     ValueBetFinder,
     apply_exposure_cap,
     kelly_fraction,
@@ -150,9 +151,13 @@ def test_value_finder_flags_only_value() -> None:
          "bookmaker": "b", "market": "1X2", "selection": s, "line": None, "odds": o}
         for s, o in (("HOME", 1.15 / p_home), ("DRAW", 3.0), ("AWAY", 3.0))
     ])
-    picks = ValueBetFinder().find(preds, odds)
+    picks = ValueBetFinder(ValueBetConfig(value_model_weight=1.0)).find(preds, odds)
     assert [p.selection for p in picks] == [Selection.home()]
     assert picks[0].stake_fraction > 0
+    # Encogido hacia el mercado, el EV ajustado es menor que el del modelo puro
+    shrunk = ValueBetFinder(ValueBetConfig(value_model_weight=0.5)).evaluate(preds, odds)
+    home = next(p for p in shrunk if p.selection == Selection.home())
+    assert home.adjusted_edge < home.edge
 
 
 def test_conflict_checker() -> None:

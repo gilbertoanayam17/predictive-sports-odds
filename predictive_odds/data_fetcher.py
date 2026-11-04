@@ -51,6 +51,9 @@ from .domain import (
 
 logger = logging.getLogger(__name__)
 
+#: Nombre de la casa que representa la línea de cierre (para CLV, nunca para apostar).
+CLOSING_BOOKMAKER = "closing"
+
 
 # =============================================================================
 # Excepciones
@@ -484,15 +487,19 @@ def validate_odds(df: pd.DataFrame) -> pd.DataFrame:
     out["line"] = pd.to_numeric(out["line"], errors="coerce")
     out["commence_time"] = pd.to_datetime(out["commence_time"], utc=True, errors="coerce")
 
-    def _valid_selection(row: pd.Series) -> bool:
+    def _valid_selection(market: Any, selection: Any, line: Any) -> bool:
         try:
-            Selection.from_codes(str(row["market"]), str(row["selection"]), row["line"])
+            Selection.from_codes(str(market), str(selection), line)
             return True
         except (ValueError, TypeError):
             return False
 
     n0 = len(out)
-    ok = out["odds"].between(1.0, 1000.0, inclusive="neither") & out.apply(_valid_selection, axis=1).astype(bool)
+    combos = out[["market", "selection", "line"]].astype(object).where(out[["market", "selection", "line"]].notna(), None)
+    keys = list(zip(combos["market"], combos["selection"], combos["line"]))
+    valid = {k: _valid_selection(*k) for k in set(keys)}
+    sel_ok = pd.Series([valid[k] for k in keys], index=out.index, dtype=bool)
+    ok = out["odds"].between(1.0, 1000.0, inclusive="neither") & sel_ok
     out = out.loc[ok]
     if len(out) < n0:
         logger.warning("Validación de momios: %d filas descartadas de %d", n0 - len(out), n0)
@@ -566,6 +573,11 @@ class FootballDataCoUkProvider(ResultsProvider):
     BASE_URL = "https://www.football-data.co.uk"
     #: Prefijos de columnas de momios por casa (formato "main").
     BOOKMAKER_PREFIXES: dict[str, str] = {"B365": "bet365", "PS": "pinnacle", "Avg": "average", "Max": "max"}
+    #: Columnas de cierre de Pinnacle → se exponen como ``CLOSING_BOOKMAKER``.
+    CLOSING_COLUMNS: tuple[tuple[str, str, str, float | None], ...] = (
+        ("PSCH", "1X2", "HOME", None), ("PSCD", "1X2", "DRAW", None), ("PSCA", "1X2", "AWAY", None),
+        ("PC>2.5", "OU", "OVER", 2.5), ("PC<2.5", "OU", "UNDER", 2.5),
+    )
 
     def __init__(self, client: HttpClient | None = None) -> None:
         """Crea el proveedor.
@@ -631,12 +643,14 @@ class FootballDataCoUkProvider(ResultsProvider):
         )
         return validate_matches(df)
 
-    def fetch_historical_odds(self, league: LeagueConfig, season: int) -> pd.DataFrame:
+    def fetch_historical_odds(self, league: LeagueConfig, season: int, include_closing: bool = True) -> pd.DataFrame:
         """Extrae los momios pre-partido incluidos en el CSV (para backtesting).
 
         Args:
             league: Liga.
             season: Temporada.
+            include_closing: Si se incluyen los momios de cierre de Pinnacle
+                (como casa ``CLOSING_BOOKMAKER``) para medir el CLV.
 
         Returns:
             DataFrame con ``ODDS_COLUMNS`` (1X2 y Over/Under 2.5).
@@ -655,6 +669,11 @@ class FootballDataCoUkProvider(ResultsProvider):
                 ):
                     if col in raw.columns and pd.notna(r[col]):
                         rows.append({**base, "bookmaker": book, "market": market,
+                                     "selection": sel, "line": line, "odds": r[col]})
+            if include_closing:
+                for col, market, sel, line in self.CLOSING_COLUMNS:
+                    if col in raw.columns and pd.notna(r[col]):
+                        rows.append({**base, "bookmaker": CLOSING_BOOKMAKER, "market": market,
                                      "selection": sel, "line": line, "odds": r[col]})
         return validate_odds(pd.DataFrame(rows)) if rows else empty_odds()
 
@@ -969,6 +988,9 @@ class SimulationConfig:
         bookmakers: Nombres de las casas simuladas.
         margin: Margen (overround) de las casas.
         bookmaker_noise: Error de estimación de cada casa (log-escala).
+        closing_noise: Error de la línea de cierre (mercado más eficiente).
+        closing_margin: Margen de la línea de cierre.
+        ou_lines: Líneas de Over/Under cotizadas.
     """
 
     seed: int = 42
@@ -983,6 +1005,8 @@ class SimulationConfig:
     bookmakers: tuple[str, ...] = ("simbet", "oddsmaker", "luckyline")
     margin: float = 0.055
     bookmaker_noise: float = 0.07
+    closing_noise: float = 0.03
+    closing_margin: float = 0.025
     ou_lines: tuple[float, ...] = (1.5, 2.5, 3.5)
 
 
@@ -1115,6 +1139,47 @@ class SimulatedDataProvider(ResultsProvider, OddsProvider):
         st.matches[season] = df
         return df.copy()
 
+    def _odds_rows(self, league: LeagueConfig, season: int, matches: pd.DataFrame,
+                   books: Sequence[tuple[str, float, float]]) -> list[dict[str, Any]]:
+        """Genera filas de momios para un conjunto de partidos.
+
+        Args:
+            league: Liga.
+            season: Temporada (para las fuerzas verdaderas).
+            matches: Partidos a cotizar.
+            books: Tuplas ``(casa, ruido, margen)``.
+
+        Returns:
+            Filas en el esquema ``ODDS_COLUMNS`` (sin validar).
+        """
+        c = self.config
+        grid = np.arange(11)
+        markets: list[tuple[str, str, float | None]] = [
+            ("1X2", "HOME", None), ("1X2", "DRAW", None), ("1X2", "AWAY", None),
+            ("BTTS", "YES", None), ("BTTS", "NO", None),
+        ] + [("OU", s, ln) for ln in c.ou_lines for s in ("OVER", "UNDER")]
+        masks = [Selection.from_codes(mk, sel, ln).mask(10) for mk, sel, ln in markets]
+        rows: list[dict[str, Any]] = []
+        for m in matches.itertuples(index=False):
+            lh, la = self.true_lambdas(league, season, str(m.home_team), str(m.away_team))
+            for book, noise, margin in books:
+                rng = self._rng(league.key, "odds", book, str(m.match_id))
+                blh = lh * np.exp(rng.normal(0, noise))
+                bla = la * np.exp(rng.normal(0, noise))
+                mat = np.outer(poisson.pmf(grid, blh), poisson.pmf(grid, bla))
+                mat /= mat.sum()
+                for (market, sel, line), mask in zip(markets, masks):
+                    p = min(max(float(mat[mask].sum()), 0.01), 0.99)
+                    odds = round(max(1.01, 1.0 / (p * (1 + margin))), 2)
+                    rows.append({"match_id": m.match_id, "league": league.key, "home_team": m.home_team,
+                                 "away_team": m.away_team, "commence_time": m.date, "bookmaker": book,
+                                 "market": market, "selection": sel, "line": line, "odds": odds})
+        return rows
+
+    def _books(self) -> list[tuple[str, float, float]]:
+        """Casas de apuestas "blandas" simuladas: ``(nombre, ruido, margen)``."""
+        return [(b, self.config.bookmaker_noise, self.config.margin) for b in self.config.bookmakers]
+
     def fetch_odds(self, league: LeagueConfig) -> pd.DataFrame:
         """Genera momios de la próxima jornada con margen y error por casa."""
         season = max(self.config.seasons)
@@ -1122,31 +1187,27 @@ class SimulatedDataProvider(ResultsProvider, OddsProvider):
         upcoming = matches[matches["status"] == STATUS_SCHEDULED]
         if upcoming.empty:
             return empty_odds()
-        next_date = upcoming["date"].min()
-        upcoming = upcoming[upcoming["date"] == next_date]
-        c = self.config
-        grid = np.arange(11)
-        rows: list[dict[str, Any]] = []
-        for _, m in upcoming.iterrows():
-            lh, la = self.true_lambdas(league, season, m["home_team"], m["away_team"])
-            for book in c.bookmakers:
-                rng = self._rng(league.key, "odds", book, m["match_id"])
-                blh = lh * np.exp(rng.normal(0, c.bookmaker_noise))
-                bla = la * np.exp(rng.normal(0, c.bookmaker_noise))
-                mat = np.outer(poisson.pmf(grid, blh), poisson.pmf(grid, bla))
-                mat /= mat.sum()
-                markets: list[tuple[str, str, float | None]] = [
-                    ("1X2", "HOME", None), ("1X2", "DRAW", None), ("1X2", "AWAY", None),
-                    ("BTTS", "YES", None), ("BTTS", "NO", None),
-                ] + [("OU", s, ln) for ln in c.ou_lines for s in ("OVER", "UNDER")]
-                for market, sel, line in markets:
-                    p = float(mat[Selection.from_codes(market, sel, line).mask(10)].sum())
-                    p = min(max(p, 0.01), 0.99)
-                    odds = round(max(1.01, 1.0 / (p * (1 + c.margin))), 2)
-                    rows.append({"match_id": m["match_id"], "league": league.key, "home_team": m["home_team"],
-                                 "away_team": m["away_team"], "commence_time": m["date"], "bookmaker": book,
-                                 "market": market, "selection": sel, "line": line, "odds": odds})
-        return validate_odds(pd.DataFrame(rows))
+        upcoming = upcoming[upcoming["date"] == upcoming["date"].min()]
+        return validate_odds(pd.DataFrame(self._odds_rows(league, season, upcoming, self._books())))
+
+    def fetch_historical_odds(self, league: LeagueConfig, season: int, include_closing: bool = True) -> pd.DataFrame:
+        """Momios pre-partido de los partidos ya jugados (para backtesting).
+
+        Args:
+            league: Liga.
+            season: Temporada.
+            include_closing: Si se añade la línea de cierre "sharp"
+                (casa ``CLOSING_BOOKMAKER``: poco ruido y margen bajo) para medir el CLV.
+
+        Returns:
+            DataFrame con ``ODDS_COLUMNS``.
+        """
+        matches = self.fetch_matches(league, season)
+        played = matches[matches["status"] == STATUS_FINISHED]
+        books = self._books()
+        if include_closing:
+            books.append((CLOSING_BOOKMAKER, self.config.closing_noise, self.config.closing_margin))
+        return validate_odds(pd.DataFrame(self._odds_rows(league, season, played, books)))
 
     def fetch_injuries(self, league: LeagueConfig, season: int) -> pd.DataFrame:
         """Sin lesiones en la simulación: devuelve un DataFrame vacío."""
@@ -1377,5 +1438,5 @@ __all__ = [
     "ApiFootballProvider", "AuthenticationError", "DataFetchError", "DataFetcher", "DataValidationError",
     "FootballDataCoUkProvider", "HttpClient", "HttpClientConfig", "OddsProvider", "ProviderNotSupportedError",
     "RateLimitError", "ResultsProvider", "SimulatedDataProvider", "SimulationConfig", "TeamNameNormalizer",
-    "TheOddsApiProvider", "complete_markets", "validate_matches", "validate_odds", "Market",
+    "TheOddsApiProvider", "CLOSING_BOOKMAKER", "complete_markets", "validate_matches", "validate_odds", "Market",
 ]

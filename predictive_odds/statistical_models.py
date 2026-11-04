@@ -806,7 +806,7 @@ class MLOutcomeModel:
                                          random_state=self.random_state, n_jobs=-1)
         else:
             clf = LogisticRegression(C=self.C, max_iter=2000)
-        return Pipeline([("impute", SimpleImputer(strategy="median")), ("scale", StandardScaler()), ("clf", clf)])
+        return Pipeline([("impute", SimpleImputer(strategy="median", keep_empty_features=True)), ("scale", StandardScaler()), ("clf", clf)])
 
     def fit(self, feature_df: pd.DataFrame) -> MLOutcomeModel:
         """Entrena los tres clasificadores.

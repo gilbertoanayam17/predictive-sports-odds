@@ -253,7 +253,7 @@ class AnalysisPipeline:
 
         finder = ValueBetFinder(c.value)
         all_picks = finder.evaluate(predictions, odds)
-        value_bets = sorted([p for p in all_picks if finder.is_value(p)], key=lambda p: p.edge, reverse=True)
+        value_bets = sorted([p for p in all_picks if finder.is_value(p)], key=lambda p: p.adjusted_edge, reverse=True)
         parlays = ParlayBuilder(c.parlay).build(all_picks, predictions)
         value_bets, parlays, _ = apply_exposure_cap(value_bets, parlays, c.max_total_exposure)
 

@@ -5,6 +5,7 @@ Uso::
     python main.py                       # Premier League simulada (sin red ni API keys)
     python main.py --league LIGA_MX --bankroll 5000
     python main.py --live --league EPL   # datos reales: football-data.co.uk + The Odds API
+    python main.py --backtest            # backtest walk-forward (ROI, CLV, drawdown, calibración)
 
 En modo ``--live`` se requiere la variable de entorno ``ODDS_API_KEY``
 (y opcionalmente ``API_FOOTBALL_KEY`` para calendario/ligas sin CSV).
@@ -31,7 +32,9 @@ from predictive_odds.data_fetcher import (
     SimulationConfig,
     TheOddsApiProvider,
 )
+from predictive_odds.backtester import BacktestConfig, Backtester, BacktestResult
 from predictive_odds.parlay_builder import ParlayConfig
+from predictive_odds.statistical_models import InsufficientDataError
 from predictive_odds.pipeline import AnalysisPipeline, AnalysisResult, PipelineConfig
 
 SEPARATOR = "=" * 100
@@ -91,6 +94,55 @@ class _NoFixtures(ResultsProvider):
     def fetch_matches(self, league, season):  # type: ignore[no-untyped-def]
         """Siempre falla para que el pipeline use los eventos de momios."""
         raise DataFetchError("Sin proveedor de calendario")
+
+
+def run_backtest(args: argparse.Namespace) -> BacktestResult:
+    """Ejecuta un backtest walk-forward sobre las dos últimas temporadas.
+
+    En modo simulado usa los momios históricos sintéticos (con línea de cierre);
+    en vivo, los CSV de football-data.co.uk (con el cierre de Pinnacle).
+
+    Args:
+        args: Argumentos de línea de comandos.
+
+    Returns:
+        Resultado del backtest.
+
+    Raises:
+        ProviderNotSupportedError: Si la liga no tiene momios históricos.
+    """
+    league = get_league(args.league)
+    seasons = (args.season - 1, args.season)
+    provider: SimulatedDataProvider | FootballDataCoUkProvider
+    if args.live:
+        provider = FootballDataCoUkProvider()
+    else:
+        provider = SimulatedDataProvider(SimulationConfig(seed=args.seed, seasons=seasons))
+    history = DataFetcher(provider).get_history(league.key, seasons)
+    odds = pd.concat([provider.fetch_historical_odds(league, s) for s in seasons], ignore_index=True)
+    config = BacktestConfig(initial_bankroll=args.bankroll, use_ml=not args.no_ml, include_parlays=args.parlays)
+    return Backtester(history, odds, config).run()
+
+
+def print_backtest(result: BacktestResult, league_key: str, simulated: bool) -> None:
+    """Imprime el informe del backtest.
+
+    Args:
+        result: Resultado del backtest.
+        league_key: Liga.
+        simulated: Si los datos son simulados.
+    """
+    tag = " [DATOS SIMULADOS]" if simulated else ""
+    section(f"BACKTEST WALK-FORWARD — {get_league(league_key).name}{tag}")
+    m = result.metrics
+    pct = {"crecimiento", "roi", "acierto", "edge_esperado_medio", "clv_medio", "clv_positivo_%", "max_drawdown"}
+    for k, v in m.items():
+        print(f"  {k:<22} {100 * v:>10.2f}%" if k in pct else f"  {k:<22} {v:>11,.2f}")
+    section("RENDIMIENTO POR MERCADO")
+    show(result.by_market().round(3).reset_index())
+    section("CALIBRACIÓN (todas las selecciones evaluadas)")
+    show(result.calibration().round(3))
+    print("\nCLV > 0 de forma sostenida es la mejor señal de un edge real; el ROI a corto plazo es muy ruidoso.")
 
 
 def print_report(result: AnalysisResult, simulated: bool) -> None:
@@ -161,6 +213,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--btts", action="store_true", help="En vivo: pedir también momios BTTS (más créditos)")
     p.add_argument("--no-ml", action="store_true", help="Desactivar el modelo de ML")
     p.add_argument("--same-match", action="store_true", help="Permitir patas del mismo partido (Bet Builder)")
+    p.add_argument("--backtest", action="store_true", help="Ejecutar un backtest walk-forward en vez del análisis")
+    p.add_argument("--parlays", action="store_true", help="Backtest: incluir también los parlays")
     p.add_argument("-v", "--verbose", action="store_true")
     return p.parse_args(argv)
 
@@ -172,6 +226,9 @@ def main(argv: list[str] | None = None) -> int:
                         format="%(levelname)s %(name)s: %(message)s")
     try:
         league = get_league(args.league)
+        if args.backtest:
+            print_backtest(run_backtest(args), league.key, simulated=not args.live)
+            return 0
         fetcher = build_fetcher(args)
         config = PipelineConfig(
             league_key=league.key, seasons=(args.season - 1, args.season), bankroll=args.bankroll,
@@ -187,6 +244,9 @@ def main(argv: list[str] | None = None) -> int:
     except DataFetchError as exc:
         print(f"Error al obtener datos: {exc}", file=sys.stderr)
         return 4
+    except InsufficientDataError as exc:
+        print(f"Datos insuficientes: {exc}", file=sys.stderr)
+        return 5
     print_report(result, simulated=not args.live)
     return 0
 
