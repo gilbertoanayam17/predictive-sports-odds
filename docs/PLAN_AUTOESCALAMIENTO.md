@@ -75,7 +75,7 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 27 | [x] | **Caliente y apuestas reales**: momio mínimo por selección para comparar en Caliente; registro aparte de las apuestas reales (momio y monto tomados) | Valor que de verdad puedes tomar; rendimiento real |
 | 28 | [x] | **"¿Por qué este pick?"**: explicación breve en cada boleto | Descartar picks absurdos |
 | 29 | [x] | **Más ligas**: Ligue 1, Eredivisie, Championship, Portugal, MLS | Más oportunidades en mercados menos eficientes |
-| 30 | [ ] | **Ciclo semanal automático**: liquidar, analizar, registrar sugerencias y resumen + picks por Telegram (tarea programada semanal) | Sin depender de acordarse |
+| 30 | [x] | **Ciclo semanal automático**: liquidar, analizar, registrar sugerencias y resumen + picks por Telegram (tarea programada semanal) | Sin depender de acordarse |
 | 31 | [ ] | **Cierre formal**: pull request, capturas en el README, versión 1.0 | Punto estable |
 
 ## Registro de ejecución
@@ -121,3 +121,4 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 2026-11-04 | #27 Caliente | ver git log | The Odds API no cubre Caliente (ni casas mexicanas); no se hace scraping. `Pick.minimum_odds` (exacto también con push) y `ValueBetFinder.reprice`; boletos con "En Caliente: apuesta si paga ≥ X"; pestaña *Mis apuestas* (momios mínimos de toda la jornada + registro real en `mis_apuestas.sqlite`, separado de las sugerencias); *Rendimiento* elige registro. Arreglado: widgets duplicados del panel de copias |
 | 2026-11-04 | #28 ¿Por qué este pick? | ver git log | `explain.py`: hasta 3 frases por boleto (modelo frente a mercado; goles esperados u forma por sede según el mercado; avisos de bajas, equipo sin historial o diferencia ≥ 10 pp con el mercado, con prioridad) |
 | 2026-11-04 | #29 Más ligas | ver git log | Ligue 1 (F1), Eredivisie (N1), Championship (E1), Primeira Liga (P1) y MLS (USA, formato extra, temporada por año natural: `season_for`). Alias de nombres y 54 pares nuevos en tests (los nombres esperados de cada fuente no se pudieron verificar en vivo). Temporada por defecto según la liga en app y CLI |
+| 2026-11-04 | #30 Ciclo semanal | ver git log | `--weekly`: liquida los dos registros (gratis), analiza las ligas como jornada multiliga, registra sugerencias y envía por Telegram el resumen (real/esperado/suerte) + picks con momio mínimo en Caliente; tolerante a fallos por liga. `scripts/automatizar_windows.ps1` (viernes 10:00 por defecto, ≈ 90 créditos/mes; sustituye a alertas_windows.ps1 y elimina su tarea). Prueba de punta a punta de dos semanas simuladas. El .ps1 NO se pudo probar aquí |

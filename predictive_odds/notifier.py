@@ -28,6 +28,7 @@ import pandas as pd
 import requests
 
 from .parlay_builder import Parlay, Pick
+from .performance import PerformanceSummary
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +187,47 @@ def format_alert(picks: Sequence[Pick], bankroll: float, parlays: Sequence[Parla
     return "\n".join(lines)
 
 
+def format_weekly(picks: Sequence[Pick], bankroll: float, my_book: str, min_edge: float,
+                  settled: int, real: PerformanceSummary | None = None, paper: PerformanceSummary | None = None,
+                  errors: Sequence[str] = ()) -> str:
+    """Mensaje del ciclo semanal: resumen de rendimiento + picks con el momio mínimo en tu casa.
+
+    Args:
+        picks: Picks nuevos de la semana (ya filtrados).
+        bankroll: Bankroll para el stake en dinero.
+        my_book: Casa del usuario (p. ej. Caliente).
+        min_edge: EV ajustado mínimo para el momio mínimo.
+        settled: Apuestas liquidadas en esta ejecución.
+        real: :class:`~predictive_odds.performance.PerformanceSummary` de las apuestas reales (o ``None``).
+        paper: Ídem de las sugerencias registradas.
+        errors: Ligas que fallaron.
+
+    Returns:
+        Texto HTML de Telegram (contenido escapado).
+    """
+    e = html.escape
+    lines = ["<b>📋 Resumen semanal</b>"]
+    if settled:
+        lines.append(f"Liquidadas esta semana: {settled}")
+    for name, summ in (("Tus apuestas reales", real), ("Sugerencias (seguimiento)", paper)):
+        if summ is not None and summ.bets:
+            lines.append(f"\n<b>{name}</b>: {summ.bets} apuestas · beneficio {summ.profit:+,.2f} "
+                         f"(ROI {summ.roi:+.1%}) · esperado {summ.expected_profit:+,.2f} · suerte {summ.luck_z:+.1f}σ")
+    if picks:
+        lines.append(f"\n<b>Picks de la jornada</b> (apuesta en {e(my_book)} solo si paga ≥ el mínimo):")
+        for p in picks:
+            kick = pd.Timestamp(p.kickoff) if p.kickoff is not None else pd.NaT
+            when = "" if pd.isna(kick) else f" ({kick.strftime('%d/%m %H:%M')})"
+            lines.append(f"• {e(p.fixture)}{e(when)}: <b>{e(p.selection.label)}</b> · mín. "
+                         f"<b>{p.minimum_odds(min_edge):.2f}</b> · stake {p.stake_fraction * bankroll:,.2f}")
+    else:
+        lines.append("\nSin picks nuevos con valor esta semana.")
+    for err in errors:
+        lines.append(f"⚠ {e(err)}")
+    lines.append("\n<i>Herramienta analítica; no es asesoría. Apuesta con responsabilidad.</i>")
+    return "\n".join(lines)
+
+
 def notify_value_bets(notifier: TelegramNotifier, picks: Sequence[Pick], bankroll: float, title: str = "",
                       min_edge: float = 0.05, sent_file: Path = SENT_FILE) -> int:
     """Selecciona, envía y recuerda los avisos nuevos.
@@ -204,5 +246,5 @@ def notify_value_bets(notifier: TelegramNotifier, picks: Sequence[Pick], bankrol
     return len(chosen)
 
 
-__all__ = ["NotifierError", "TelegramNotifier", "format_alert", "mark_sent", "notify_value_bets", "pick_key",
+__all__ = ["NotifierError", "TelegramNotifier", "format_alert", "format_weekly", "mark_sent", "notify_value_bets", "pick_key",
            "select_alerts"]

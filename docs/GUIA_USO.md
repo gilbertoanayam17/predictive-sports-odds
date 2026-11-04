@@ -85,11 +85,13 @@ El `BANKROLL` del script se reparte entre las ligas, para que la exposición con
 1. En Telegram, abre **@BotFather**, envía `/newbot` y copia el *token*.
 2. Escribe cualquier mensaje a tu bot nuevo.
 3. Añade `TELEGRAM_BOT_TOKEN=el_token` a tu `.env` y ejecuta `python main.py --telegram-setup`. El comando encuentra tu `chat_id`, te dice qué línea añadir al `.env` y te manda un mensaje de prueba.
-4. Programa el análisis diario con avisos (desde la carpeta del proyecto, en PowerShell):
+4. Programa el **ciclo semanal automático** (desde la carpeta del proyecto, en PowerShell):
    ```powershell
-   powershell -ExecutionPolicy Bypass -File scripts\alertas_windows.ps1
+   powershell -ExecutionPolicy Bypass -File scripts\automatizar_windows.ps1
    ```
-   Crea la tarea *PredictiveSportsOdds-Alertas* (cada 24 h, 5 ligas, ≈300 créditos al mes) y guarda la salida en `data\alertas.log`. Opciones: `-Horas 12`, `-Ligas "EPL LA_LIGA"`, `-EvMinimo 0.06`; para quitarla, `-Quitar`.
+   Cada **viernes a las 10:00**, el ciclo liquida tus apuestas pendientes (sugerencias y reales), analiza las 10 ligas, registra las sugerencias y te manda por Telegram el **resumen de la semana** (real frente a esperado, suerte) y los **picks nuevos con el momio mínimo en Caliente**. Consumo: ≈ 90 créditos al mes. Opciones: `-Dia Thursday -Hora 18:00`, `-Ligas "EPL LIGA_MX"`, `-Frecuencia Diaria` (≈ 600 créditos al mes, más que el plan gratuito); para quitarla, `-Quitar`. Si quieres probarla en el momento: `Start-ScheduledTask -TaskName PredictiveSportsOdds-Ciclo`. La salida queda en `data\ciclo.log`.
+
+   A mano equivale a: `python main.py --live --weekly`.
 
 Solo se avisan los value bets **nuevos** con EV ajustado ≥ 5%; el mismo pick nunca se manda dos veces. El token no aparece en errores ni registros. También puedes avisar a mano: `python main.py --live --leagues EPL LA_LIGA --alert`.
 

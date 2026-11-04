@@ -33,11 +33,19 @@ from predictive_odds.data_fetcher import (
 )
 from predictive_odds.bet_tracker import BetTracker, TrackerError
 from predictive_odds.backtester import BacktestConfig, Backtester, BacktestResult
-from predictive_odds.parlay_builder import ParlayConfig, Pick
+from predictive_odds.parlay_builder import ParlayConfig, Pick, ValueBetConfig
 from predictive_odds.statistical_models import InsufficientDataError
 from predictive_odds.odds_history import OddsHistory, OddsHistoryError
 from predictive_odds.league_study import StudyConfig, run_study, save_profiles, study_frame
-from predictive_odds.notifier import NotifierError, TelegramNotifier, notify_value_bets
+from predictive_odds.notifier import (
+    NotifierError,
+    TelegramNotifier,
+    format_weekly,
+    mark_sent,
+    notify_value_bets,
+    select_alerts,
+)
+from predictive_odds.performance import summarize
 from predictive_odds.report import save_report
 from predictive_odds.risk import RiskConfig, risk_table
 from predictive_odds.settings import load_env
@@ -374,6 +382,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--alert", action="store_true",
                    help="Enviar por Telegram los value bets nuevos (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID en .env)")
     p.add_argument("--alert-min-ev", type=float, default=0.05, help="EV ajustado mínimo para avisar (0.05 = 5%%)")
+    p.add_argument("--weekly", action="store_true",
+                   help="Ciclo semanal: liquida, analiza las ligas, registra sugerencias y avisa por Telegram")
+    p.add_argument("--real-track", default="mis_apuestas.sqlite", help="Registro de tus apuestas reales")
     p.add_argument("--telegram-setup", action="store_true",
                    help="Comprueba el bot de Telegram, encuentra tu chat_id y envía un mensaje de prueba")
     p.add_argument("--study", action="store_true",
@@ -399,6 +410,8 @@ def main(argv: list[str] | None = None) -> int:
                         format="%(levelname)s %(name)s: %(message)s")
     if args.telegram_setup:
         return telegram_setup()
+    if args.weekly:
+        return run_weekly(args)
     if args.settle:
         if not args.track:
             print("--settle requiere --track <archivo.sqlite>", file=sys.stderr)
@@ -479,6 +492,74 @@ def main(argv: list[str] | None = None) -> int:
         except TrackerError as exc:
             print(f"Error en el registro de apuestas: {exc}", file=sys.stderr)
             return 6
+    return 0
+
+
+def run_weekly(args: argparse.Namespace) -> int:
+    """Ciclo semanal automático (pensado para una tarea programada).
+
+    1. Liquida las apuestas pendientes de los dos registros (sugerencias y
+       reales) con los resultados de cada liga (gratis, football-data.co.uk).
+    2. Analiza las ligas como una jornada multiliga (tope de exposición global).
+    3. Registra las sugerencias en el registro de seguimiento.
+    4. Envía por Telegram el resumen y los picks nuevos con el momio mínimo en tu casa.
+
+    Args:
+        args: Argumentos (``--leagues``, ``--live``, ``--track``, ``--real-track``...).
+
+    Returns:
+        Código de salida (0 = bien, aunque alguna liga falle).
+    """
+    leagues = [k.upper() for k in args.leagues] if args.leagues else selectable_leagues()
+    track = args.track or "bets.sqlite"
+    my_book = os.environ.get("MI_CASA", "Caliente")
+    min_edge = ValueBetConfig().min_edge
+    section(f"CICLO SEMANAL · {', '.join(leagues)}" + ("" if args.live else " [DATOS SIMULADOS]"))
+    settled = 0
+    errors: list[str] = []
+    for key in leagues:  # 1. liquidar (sin gastar créditos)
+        try:
+            season = args.season if args.season and not args.live else season_for(key)
+            results = make_fetcher(args.live, key, (season - 1, season), seed=args.seed,
+                                   played_rounds=args.played_rounds).history_provider.fetch_matches(
+                                       get_league(key), season)
+            for path in (track, args.real_track):
+                with BetTracker(path) as tracker:
+                    settled += tracker.settle(results)
+        except (DataFetchError, TrackerError, ConfigurationError) as exc:
+            errors.append(f"{key}: no se pudo liquidar ({exc})")
+    print(f"Liquidadas: {settled}")
+    season = args.season if args.season else season_for(leagues[0])
+    try:  # 2. analizar
+        fetcher = make_fetcher(args.live, leagues[0], (season - 1, season), os.environ.get("ODDS_API_KEY", ""),
+                               os.environ.get("API_FOOTBALL_KEY", ""), seed=args.seed, played_rounds=args.played_rounds)
+        slate = analyze_slate(fetcher, leagues, PipelineConfig(seasons=(season - 1, season), bankroll=args.bankroll,
+                                                               use_ml=not args.no_ml, max_singles=args.max_singles))
+        errors += [f"{k}: {v}" for k, v in slate.errors.items()]
+        print_slate(slate, not args.live)
+    except (DataFetchError, AuthenticationError) as exc:
+        print(f"Análisis no disponible: {exc}", file=sys.stderr)
+        slate = None
+        errors.append(f"análisis: {exc}")
+    new_picks: list[Pick] = []
+    if slate is not None:  # 3. registrar sugerencias
+        with BetTracker(track) as tracker:
+            n = tracker.record_analysis(slate.value_bets, slate.parlays, args.bankroll)
+        print(f"Sugerencias registradas en {track}: {n}")
+        new_picks = select_alerts(slate.value_bets, min_edge)
+    with BetTracker(args.real_track) as real_t, BetTracker(track) as paper_t:
+        real, paper = summarize(real_t.bets()), summarize(paper_t.bets())
+    notifier = TelegramNotifier.from_env()  # 4. avisar
+    if notifier is None:
+        print("Telegram no configurado (TELEGRAM_BOT_TOKEN): el resumen solo se muestra aquí.")
+        return 0
+    try:
+        notifier.send(format_weekly(new_picks, args.bankroll, my_book, min_edge, settled, real, paper, errors))
+        mark_sent(new_picks)
+        print(f"Telegram: resumen enviado ({len(new_picks)} pick(s) nuevos).")
+    except NotifierError as exc:
+        print(f"Telegram: {exc}", file=sys.stderr)
+        return 9
     return 0
 
 
