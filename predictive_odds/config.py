@@ -30,6 +30,8 @@ class LeagueConfig:
         football_data_format: ``"main"`` (un CSV por temporada) o ``"extra"``
             (un CSV con todas las temporadas, usado para ligas como Liga MX).
         sample_teams: Equipos usados por el proveedor simulado.
+        is_international: Competición entre clubes de varias ligas (p. ej. UCL);
+            el modelo multiliga usa las ligas domésticas para comparar equipos.
     """
 
     key: str
@@ -41,6 +43,7 @@ class LeagueConfig:
     football_data_code: str | None = None
     football_data_format: Literal["main", "extra"] | None = None
     sample_teams: tuple[str, ...] = ()
+    is_international: bool = False
 
 
 LEAGUES: dict[str, LeagueConfig] = {
@@ -66,6 +69,7 @@ LEAGUES: dict[str, LeagueConfig] = {
         country="Europe",
         api_football_id=2,
         odds_api_sport_key="soccer_uefa_champs_league",
+        is_international=True,
         sample_teams=(
             "Real Madrid", "Barcelona", "Bayern Munich", "Paris Saint-Germain",
             "Inter", "Manchester City", "Arsenal", "Liverpool", "Borussia Dortmund",

@@ -218,6 +218,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--btts", action="store_true", help="En vivo: pedir también momios BTTS (más créditos)")
     p.add_argument("--no-ml", action="store_true", help="Desactivar el modelo de ML")
     p.add_argument("--same-match", action="store_true", help="Permitir patas del mismo partido (Bet Builder)")
+    p.add_argument("--extra-leagues", nargs="*", default=None,
+                   help="Ligas domésticas para el modelo multiliga (por defecto EPL si la liga es internacional)")
     p.add_argument("--model-path", default=None, help="Bundle .joblib: reutiliza modelos guardados y guarda al reentrenar")
     p.add_argument("--backtest", action="store_true", help="Ejecutar un backtest walk-forward en vez del análisis")
     p.add_argument("--parlays", action="store_true", help="Backtest: incluir también los parlays")
@@ -240,6 +242,8 @@ def main(argv: list[str] | None = None) -> int:
             league_key=league.key, seasons=(args.season - 1, args.season), bankroll=args.bankroll,
             use_ml=not args.no_ml, parlay=ParlayConfig(allow_same_match=args.same_match),
             model_path=args.model_path,
+            extra_leagues=tuple(args.extra_leagues) if args.extra_leagues is not None
+            else (("EPL",) if league.is_international else ()),
         )
         result = AnalysisPipeline(fetcher, config).run()
     except ConfigurationError as exc:

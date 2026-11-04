@@ -38,7 +38,7 @@ import pandas as pd
 import requests
 from scipy.stats import poisson
 
-from .config import LeagueConfig, get_league
+from .config import LEAGUES, LeagueConfig, get_league
 from .domain import (
     MARKET_SIZE,
     MATCH_COLUMNS,
@@ -990,6 +990,8 @@ class SimulationConfig:
         bookmaker_noise: Error de estimación de cada casa (log-escala).
         closing_noise: Error de la línea de cierre (mercado más eficiente).
         closing_margin: Margen de la línea de cierre.
+        league_offsets: Fuerza relativa de cada liga doméstica (solo influye en
+            competiciones internacionales; ``OTHER`` = clubes sin liga simulada).
         injury_rate: Probabilidad de que un equipo tenga bajas en la próxima jornada.
         injury_max_players: Máximo de bajas por equipo.
         injury_attack_effect: Pérdida real de ataque por baja.
@@ -1012,6 +1014,7 @@ class SimulationConfig:
     bookmaker_noise: float = 0.07
     closing_noise: float = 0.03
     closing_margin: float = 0.025
+    league_offsets: dict[str, float] = field(default_factory=lambda: {"EPL": 0.20, "LIGA_MX": -0.20, "OTHER": 0.15})
     injury_rate: float = 0.35
     injury_max_players: int = 3
     injury_attack_effect: float = 0.04
@@ -1107,12 +1110,46 @@ class SimulatedDataProvider(ResultsProvider, OddsProvider):
         Returns:
             ``(lambda_local, lambda_visitante)``.
         """
+        c = self.config
+        att_h, def_h = self._team_strength(league, season, home)
+        att_a, def_a = self._team_strength(league, season, away)
+        lh = np.exp(c.base_log_rate + c.home_advantage + att_h + def_a)
+        la = np.exp(c.base_log_rate + att_a + def_h)
+        return float(lh), float(la)
+
+    def domestic_league(self, team: str, exclude: str = "") -> str | None:
+        """Liga doméstica simulada de un equipo (``None`` si no pertenece a ninguna).
+
+        Args:
+            team: Equipo.
+            exclude: Clave de liga a ignorar.
+
+        Returns:
+            Clave de la liga doméstica o ``None``.
+        """
+        for key, cfg in LEAGUES.items():
+            if key != exclude and not cfg.is_international and team in cfg.sample_teams:
+                return key
+        return None
+
+    def _team_strength(self, league: LeagueConfig, season: int, team: str) -> tuple[float, float]:
+        """Fuerza (ataque, defensa) verdadera, coherente entre competiciones.
+
+        En una competición internacional, un club con liga doméstica simulada usa
+        su fuerza doméstica desplazada por el coeficiente de su liga.
+        """
         self._ensure_strengths(league, season)
         st = self._state[league.key]
-        c = self.config
-        lh = np.exp(c.base_log_rate + c.home_advantage + st.attack[season][home] + st.defense[season][away])
-        la = np.exp(c.base_log_rate + st.attack[season][away] + st.defense[season][home])
-        return float(lh), float(la)
+        if league.is_international:
+            home_key = self.domestic_league(team, exclude=league.key)
+            off = self.config.league_offsets.get(home_key or "OTHER", 0.0)
+            if home_key is not None:
+                dom = get_league(home_key)
+                self._ensure_strengths(dom, season)
+                dst = self._state[dom.key]
+                return dst.attack[season][team] + off, dst.defense[season][team] - off
+            return st.attack[season][team] + off, st.defense[season][team] - off
+        return st.attack[season][team], st.defense[season][team]
 
     def fetch_matches(self, league: LeagueConfig, season: int) -> pd.DataFrame:
         """Genera los partidos de una temporada (ver :class:`ResultsProvider`)."""

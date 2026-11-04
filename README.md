@@ -73,6 +73,9 @@ Walk-forward fecha a fecha: reentrena solo con el pasado, apuesta con los momios
 
 Hallazgo medido (simulación, 4 semillas): con el modelo puro, el EV esperado medio de los picks era ≈18% y el real ≈3.8%. Encoger la probabilidad al 50% hacia el mercado sube el EV real a 5.3% y el CLV de 2.6% a 4.0%; limitar los momios a ≤ 4 empeora. Por eso el valor por defecto es `value_model_weight=0.5`. Los parlays del backtest rinden peor que las sencillas, como era de esperar por la varianza y el error compuesto del modelo.
 
+### Modelo multiliga (UCL)
+En competiciones internacionales, Poisson se entrena junto con las ligas domésticas (`extra_leagues`, por defecto la EPL para la UCL) y estima un coeficiente de fuerza por liga `L`: ataque + L y defensa − L. Dentro de una liga, L se cancela; en los cruces entre ligas es lo que permite comparar a los equipos. Medido con UCL escasa (8 jornadas de entrenamiento, 8 semillas): combinar datos baja el error de λ de 0.242 a 0.215 y el log-loss de 1.039 a 1.025. El coeficiente de liga aporta además cuando las ligas difieren mucho (0.229 → 0.220; log-loss 1.007 → 1.001).
+
 ### Lesiones (`injuries.py`)
 Las bajas (API-Football o simuladas) se traducen en multiplicadores de ataque y defensa que modifican las λ de Poisson. Como el ML no conoce ese contexto, sus probabilidades se corrigen en la misma proporción. Medido en la simulación (20 jornadas con bajas que las casas sí descuentan), el EV real de los value bets sube de 6.3% a 6.5%, y de 5.7% a 6.1% en los partidos con bajas. La mejora es moderada porque el encogimiento hacia el mercado ya absorbía parte del efecto. Activado por defecto (`use_injuries=True`).
 
@@ -96,7 +99,7 @@ st.dataframe(result.parlays_frame())
 
 ## Limitaciones y próximos pasos
 - Las **lesiones** se convierten en ajustes con una heurística (3% de ataque y 2% de defensa por baja; las dudas cuentan a medias; tope del 15%). Para mejorarlo hacen falta datos de importancia por jugador (`PlayerImpact`), como minutos o goles+asistencias.
-- **UCL:** los equipos de ligas distintas no tienen historial compartido. Falta un modelo multiliga con un coeficiente de fuerza por liga.
+- **Multiliga:** solo la EPL está configurada como liga doméstica de los participantes de la UCL. Para la UCL real hay que registrar LaLiga, Serie A, Bundesliga y Ligue 1 (`register_league`) y pasarlas en `--extra-leagues`.
 - Los momios de un parlay del mismo partido se calculan como producto; un *Bet Builder* real los ajusta por correlación (el sistema lo avisa).
 - Scrapers de xG (Understat) como un `ResultsProvider` más.
 

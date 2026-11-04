@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from .calibration import ProbabilityCalibrator
+from .config import get_league
 from .data_fetcher import DataFetcher, DataFetchError
 from .domain import STATUS_FINISHED, MatchPrediction, Selection
 from .injuries import InjuryAdjuster, InjuryImpactConfig
@@ -39,6 +40,7 @@ from .statistical_models import (
     PoissonModelConfig,
     TeamAdjustment,
     evaluate_predictions,
+    infer_team_leagues,
     NEUTRAL_ADJUSTMENT,
 )
 
@@ -63,6 +65,8 @@ class PipelineConfig:
         model_path: Si se indica, se reutiliza el bundle guardado mientras no
             esté desactualizado y se guarda tras cada reentrenamiento.
         max_model_age_days: Antigüedad máxima del bundle respecto al último partido.
+        extra_leagues: Ligas domésticas adicionales para el modelo de Poisson
+            multiliga (útil en competiciones internacionales como la UCL).
         use_injuries: Si se ajustan las λ por lesiones/bajas reportadas.
         injury: Parámetros de la heurística de lesiones.
         calibrator: Calibrador opcional (ajustado, p. ej., sobre un backtest).
@@ -83,6 +87,7 @@ class PipelineConfig:
     max_model_age_days: int = 7
     calibrator: ProbabilityCalibrator | None = None
     use_injuries: bool = True
+    extra_leagues: tuple[str, ...] = ()
     injury: InjuryImpactConfig = field(default_factory=InjuryImpactConfig)
 
 
@@ -164,7 +169,7 @@ class AnalysisPipeline:
         Returns:
             ``(ensamble, feature_engineer, features_históricas)``.
         """
-        poisson_model = PoissonModel(self.config.poisson).fit(history)
+        poisson_model = self.fit_poisson(history)
         fe = FeatureEngineer()
         feats = fe.fit_transform(history)
         ml: MLOutcomeModel | None = None
@@ -174,6 +179,32 @@ class AnalysisPipeline:
             except InsufficientDataError as exc:
                 logger.warning("ML desactivado: %s", exc)
         return EnsemblePredictor(poisson_model, ml, fe, self.config.ml_weight), fe, feats
+
+    def fit_poisson(self, history: pd.DataFrame) -> PoissonModel:
+        """Entrena Poisson; en modo multiliga añade las ligas de ``extra_leagues``.
+
+        Las ligas adicionales que no se puedan descargar se omiten con un aviso.
+
+        Args:
+            history: Partidos de la liga principal.
+
+        Returns:
+            Modelo de Poisson entrenado.
+        """
+        c = self.config
+        if not c.extra_leagues:
+            return PoissonModel(c.poisson).fit(history)
+        frames = [history]
+        for key in c.extra_leagues:
+            try:
+                frames.append(self.fetcher.get_history(key, c.seasons))
+            except DataFetchError as exc:
+                logger.warning("Liga adicional %s omitida: %s", key, exc)
+        combined = pd.concat(frames, ignore_index=True)
+        intl = [k for k in combined["league"].dropna().unique() if get_league(str(k)).is_international]
+        team_leagues = infer_team_leagues(combined, intl)
+        logger.info("Poisson multiliga: %d partidos de %d competiciones", len(combined), len(frames))
+        return PoissonModel(c.poisson).fit(combined, reference_date=history["date"].max(), team_leagues=team_leagues)
 
     def get_models(self, history: pd.DataFrame) -> EnsemblePredictor:
         """Devuelve modelos listos: carga el bundle vigente o reentrena (y guarda).
@@ -333,9 +364,10 @@ class AnalysisPipeline:
         parlays = ParlayBuilder(c.parlay).build(all_picks, predictions)
         value_bets, parlays, _ = apply_exposure_cap(value_bets, parlays, c.max_total_exposure)
 
+        ratings = ensemble.poisson.team_ratings()
         return AnalysisResult(
             league=c.league_key, bankroll=c.bankroll, standings=analyzer.standings(), fixtures=fixtures,
             predictions=predictions, reports=reports, all_picks=all_picks, value_bets=value_bets,
             parlays=parlays, evaluation=self.evaluate_models(history) if evaluate else {},
-            team_ratings=ensemble.poisson.team_ratings(), adjustments=adjustments,
+            team_ratings=ratings[ratings["team"].isin(set(known))].reset_index(drop=True), adjustments=adjustments,
         )

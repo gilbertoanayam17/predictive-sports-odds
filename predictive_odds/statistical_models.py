@@ -586,6 +586,7 @@ class PoissonModelConfig:
         half_life_days: Vida media del peso temporal (partidos viejos pesan menos).
         xg_weight: Peso del xG frente a los goles reales en el objetivo (0-1).
         prior_sd: Desviación del prior gaussiano de fuerzas (regularización).
+        league_prior_sd: Prior de los coeficientes de fuerza por liga (multiliga).
         max_goals: Goles máximos por equipo en la matriz.
         dixon_coles: Si se aplica la corrección de marcadores bajos.
         min_matches: Partidos mínimos para entrenar.
@@ -594,6 +595,7 @@ class PoissonModelConfig:
     half_life_days: float = 240.0
     xg_weight: float = 0.4
     prior_sd: float = 0.6
+    league_prior_sd: float = 0.4
     max_goals: int = 10
     dixon_coles: bool = True
     min_matches: int = 30
@@ -622,6 +624,8 @@ class PoissonModel:
         self.mu: float = 0.0
         self.home_adv: float = 0.0
         self.rho: float = 0.0
+        self.team_leagues: dict[str, str] = {}
+        self.league_strength: dict[str, float] = {}
         self._fitted = False
         self._warned: set[str] = set()
 
@@ -630,13 +634,21 @@ class PoissonModel:
         """Indica si el modelo está entrenado."""
         return self._fitted
 
-    def fit(self, matches: pd.DataFrame, reference_date: pd.Timestamp | None = None) -> PoissonModel:
+    def fit(self, matches: pd.DataFrame, reference_date: pd.Timestamp | None = None,
+            team_leagues: Mapping[str, str] | None = None) -> PoissonModel:
         """Entrena el modelo.
+
+        Modo multiliga: si se pasa ``team_leagues`` (equipo → liga doméstica),
+        se estima además un coeficiente de fuerza por liga ``L``:
+        ``ataque_efectivo = ataque + L`` y ``defensa_efectiva = defensa − L``.
+        En partidos de la misma liga ``L`` se cancela; en los partidos entre
+        ligas (p. ej. Champions) es lo que permite comparar a los equipos.
 
         Args:
             matches: Partidos (se usan los finalizados).
             reference_date: Fecha respecto a la cual se calcula el decaimiento
                 (por defecto, el último partido).
+            team_leagues: Liga doméstica de cada equipo (opcional).
 
         Returns:
             ``self``.
@@ -663,24 +675,37 @@ class PoissonModel:
         w = 0.5 ** (age / self.config.half_life_days)
         w = w / w.mean()
         ridge = 1.0 / (2 * self.config.prior_sd ** 2)
+        self.team_leagues = {str(k): str(v) for k, v in (team_leagues or {}).items()}
+        fitted_leagues = {self.team_leagues[t] for t in self.teams if t in self.team_leagues}
+        leagues = sorted(fitted_leagues | {"OTHER"}) if team_leagues else []
+        nl = len(leagues)
+        lg_idx = {lg: i for i, lg in enumerate(leagues)}
+        team_lg = np.array([lg_idx[self.team_leagues.get(t, "OTHER")] for t in self.teams], dtype=int) if nl else np.zeros(n, int)
+        lgh, lga = team_lg[hi], team_lg[ai]
+        ridge_l = 1.0 / (2 * self.config.league_prior_sd ** 2)
 
         def nll(theta: np.ndarray) -> tuple[float, np.ndarray]:
             mu, home = theta[0], theta[1]
-            att, dfn = theta[2:2 + n], theta[2 + n:]
-            log_lh = mu + home + att[hi] + dfn[ai]
-            log_la = mu + att[ai] + dfn[hi]
+            att, dfn = theta[2:2 + n], theta[2 + n:2 + 2 * n]
+            lstr = theta[2 + 2 * n:]
+            shift = (lstr[lgh] - lstr[lga]) if nl else 0.0
+            log_lh = mu + home + att[hi] + dfn[ai] + shift
+            log_la = mu + att[ai] + dfn[hi] - shift
             lh, la = np.exp(log_lh), np.exp(log_la)
             ll = np.sum(w * (yh * log_lh - lh + ya * log_la - la))
-            value = -ll + ridge * (att @ att + dfn @ dfn)
+            value = -ll + ridge * (att @ att + dfn @ dfn) + ridge_l * (lstr @ lstr)
             rh, ra = w * (yh - lh), w * (ya - la)
             grad = np.empty_like(theta)
             grad[0] = -(rh.sum() + ra.sum())
             grad[1] = -rh.sum()
             grad[2:2 + n] = -(np.bincount(hi, rh, n) + np.bincount(ai, ra, n)) + 2 * ridge * att
-            grad[2 + n:] = -(np.bincount(ai, rh, n) + np.bincount(hi, ra, n)) + 2 * ridge * dfn
+            grad[2 + n:2 + 2 * n] = -(np.bincount(ai, rh, n) + np.bincount(hi, ra, n)) + 2 * ridge * dfn
+            if nl:
+                d = rh - ra  # d(log_lh)/dL = +1 (liga local), d(log_la)/dL = −1
+                grad[2 + 2 * n:] = -(np.bincount(lgh, d, nl) - np.bincount(lga, d, nl)) + 2 * ridge_l * lstr
             return float(value), grad
 
-        theta0 = np.zeros(2 + 2 * n)
+        theta0 = np.zeros(2 + 2 * n + nl)
         theta0[0] = float(np.log(max(float(np.mean(np.r_[yh, ya])), 0.1)))
         theta0[1] = 0.2
         res = minimize(nll, theta0, jac=True, method="L-BFGS-B")
@@ -689,13 +714,19 @@ class PoissonModel:
         if not res.success:
             logger.warning("Optimización de Poisson con aviso: %s", res.message)
         self.mu, self.home_adv = float(res.x[0]), float(res.x[1])
-        self.attack = {t: float(res.x[2 + i]) for t, i in idx.items()}
-        self.defense = {t: float(res.x[2 + n + i]) for t, i in idx.items()}
+        lvals = res.x[2 + 2 * n:]
+        self.league_strength = {lg: float(lvals[i]) for lg, i in lg_idx.items()}
+        offset = lvals[team_lg] if nl else np.zeros(n)
+        # Se guardan las fuerzas EFECTIVAS (con la liga incluida)
+        eff_att = res.x[2:2 + n] + offset
+        eff_def = res.x[2 + n:2 + 2 * n] - offset
+        self.attack = {t: float(eff_att[i]) for t, i in idx.items()}
+        self.defense = {t: float(eff_def[i]) for t, i in idx.items()}
 
         self.rho = 0.0
         if self.config.dixon_coles:
-            lh = np.exp(self.mu + self.home_adv + res.x[2 + hi] + res.x[2 + n + ai])
-            la = np.exp(self.mu + res.x[2 + ai] + res.x[2 + n + hi])
+            lh = np.exp(self.mu + self.home_adv + eff_att[hi] + eff_def[ai])
+            la = np.exp(self.mu + eff_att[ai] + eff_def[hi])
             x, y = goals_h.astype(int), goals_a.astype(int)
 
             def neg_tau_ll(rho: float) -> float:
@@ -712,11 +743,14 @@ class PoissonModel:
         return self
 
     def _strength(self, team: str) -> tuple[float, float]:
-        """Ataque y defensa de un equipo (0 = promedio si es desconocido)."""
-        if team not in self.attack and team not in self._warned:
+        """Ataque y defensa efectivos (equipo desconocido = promedio de su liga, o 0)."""
+        if team in self.attack:
+            return self.attack[team], self.defense[team]
+        if team not in self._warned:
             logger.warning("Equipo '%s' sin historial: se asume fuerza promedio", team)
             self._warned.add(team)
-        return self.attack.get(team, 0.0), self.defense.get(team, 0.0)
+        lg = self.league_strength.get(self.team_leagues.get(team, ""), 0.0)
+        return lg, -lg
 
     def expected_goals(self, home: str, away: str, neutral: bool = False) -> tuple[float, float]:
         """Goles esperados de cada equipo.
@@ -799,6 +833,29 @@ class PoissonModel:
                            "defense": [np.exp(self.defense[t]) for t in self.teams]})
         df["net"] = np.log(df["attack"]) - np.log(df["defense"])
         return df.sort_values("net", ascending=False).reset_index(drop=True)
+
+
+def infer_team_leagues(matches: pd.DataFrame, international: Sequence[str] = ()) -> dict[str, str]:
+    """Infiere la liga doméstica de cada equipo (la más frecuente fuera de torneos internacionales).
+
+    Args:
+        matches: Partidos de varias competiciones (columna ``league``).
+        international: Claves de competiciones internacionales a ignorar.
+
+    Returns:
+        Mapa ``equipo -> liga``; los equipos que solo juegan torneos
+        internacionales se asignan a ``"OTHER"``.
+    """
+    intl = set(international)
+    long = pd.concat([
+        matches[["home_team", "league"]].rename(columns={"home_team": "team"}),
+        matches[["away_team", "league"]].rename(columns={"away_team": "team"}),
+    ])
+    out: dict[str, str] = {}
+    for team, grp in long.groupby("team"):
+        domestic = grp.loc[~grp["league"].isin(intl), "league"]
+        out[str(team)] = str(domestic.mode().iloc[0]) if not domestic.empty else "OTHER"
+    return out
 
 
 # =============================================================================
@@ -1025,5 +1082,5 @@ def evaluate_predictions(probs: np.ndarray, outcomes: np.ndarray) -> dict[str, f
 __all__ = [
     "EloRatingSystem", "EnsemblePredictor", "FEATURE_COLUMNS", "FeatureEngineer", "FormSummary", "H2HSummary",
     "HeuristicAnalyzer", "InsufficientDataError", "MLOutcomeModel", "MatchReport", "ModelNotFittedError",
-    "PoissonModel", "PoissonModelConfig", "TeamAdjustment", "NEUTRAL_ADJUSTMENT", "TeamSnapshot", "evaluate_predictions", "Market",
+    "PoissonModel", "PoissonModelConfig", "TeamAdjustment", "infer_team_leagues", "NEUTRAL_ADJUSTMENT", "TeamSnapshot", "evaluate_predictions", "Market",
 ]

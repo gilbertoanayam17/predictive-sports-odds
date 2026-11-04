@@ -24,7 +24,7 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 1 | [x] | **Backtester walk-forward** (`backtester.py`): reentrenar por jornada, apostar con las reglas del motor, medir ROI, yield, drawdown, CLV y la calibración por tramos | Indispensable: sin backtest no se sabe si el sistema gana dinero | — |
 | 2 | [x] | **Calibración y persistencia de modelos**: diagrama de fiabilidad, calibración isotónica/Platt opcional, guardar y cargar modelos (`joblib`) | Evita reentrenar; probabilidades más fiables | 1 |
 | 3 | [x] | **Ajuste por lesiones**: impacto por jugador ausente sobre λ (heurística por titularidad/posición) e integración con `fetch_injuries` | Mayor fuente de error del modelo | — |
-| 4 | [ ] | **Modelo multiliga para UCL**: coeficiente de fuerza por liga, entrenamiento conjunto con varias ligas | La UCL hoy trata a los equipos como de fuerza promedio | — |
+| 4 | [x] | **Modelo multiliga para UCL**: coeficiente de fuerza por liga, entrenamiento conjunto con varias ligas | La UCL hoy trata a los equipos como de fuerza promedio | — |
 | 5 | [x] | **CI en GitHub Actions**: pytest + mypy en cada push | Calidad continua | — |
 | 6 | [ ] | **Registro de apuestas y bankroll** (SQLite): guardar picks, liquidarlos con resultados y llevar el P&L | Seguimiento real del rendimiento | 1 |
 | 7 | [ ] | **App Streamlit** (`app.py`): predicciones, value bets, parlays, backtest y ajustes | Fase de UI | 1, 6 |
@@ -39,3 +39,4 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 2026-11-04 | #2 Calibración y persistencia | ver git log | `calibration.py` (isotónico/Platt, ECE, fiabilidad) y `model_store.py` (bundle joblib con validación de liga/formato/antigüedad). Calibración medida: no mejora el Brier en la simulación → desactivada por defecto. `--model-path` en main |
 | 2026-11-04 | Fix CI | ver git log | mypy fallaba en Python 3.10 (numpy 2.2/pandas-stubs 2.3); reproducido con esas versiones y corregido |
 | 2026-11-04 | #3 Ajuste por lesiones | ver git log | `injuries.py` + `TeamAdjustment` en Poisson/ensamble (ML corregido por razón). Bajas simuladas que las casas descuentan. EV real de los value bets 6.3%→6.5% (20 semillas); en partidos con bajas 5.7%→6.1%. Activado por defecto |
+| 2026-11-04 | #4 Modelo multiliga UCL | ver git log | Coeficiente de liga en Poisson (gradiente verificado numéricamente), simulación coherente entre competiciones, `extra_leagues`/`--extra-leagues`. UCL escasa: error de λ 0.242→0.215 al combinar con la EPL; el coeficiente de liga ayuda si la diferencia entre ligas es grande (0.229→0.220) |
