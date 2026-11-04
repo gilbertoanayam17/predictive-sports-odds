@@ -35,7 +35,7 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | # | Estado | Tarea | Valor | Depende de |
 |---|---|---|---|---|
 | 9 | [x] | **Empaquetado** (`pyproject.toml`, `pip install -e .`, comando `predictive-odds`) | Instalación y reutilización triviales | — |
-| 10 | [ ] | **Ajuste de hiperparámetros** con validación cronológica (vida media, peso del xG, prior, peso del ML); solo se cambian los valores por defecto si mejoran fuera de muestra | Mejor modelo, medido | 1 |
+| 10 | [x] | **Ajuste de hiperparámetros** con validación cronológica (vida media, peso del xG, prior, peso del ML); solo se cambian los valores por defecto si mejoran fuera de muestra | Mejor modelo, medido | 1 |
 | 11 | [ ] | **Simulador de riesgo Monte Carlo**: distribución de bankroll, drawdown y riesgo de ruina según la fracción de Kelly y el tope de exposición | Elegir el staking con datos | 1 |
 | 12 | [ ] | **Informe diario exportable** (Markdown/HTML) con picks, parlays, stakes y avisos | Consumo fácil fuera de la terminal | — |
 | 13 | [ ] | **Mercados extra**: Draw No Bet y hándicap asiático (con push/medio push) | Más oportunidades de valor | — |
@@ -56,3 +56,4 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 2026-11-04 | #8 xG Understat (parcial) | ver git log | `xg_sources.py`: `merge_xg` verificado (nombres, fecha ±2 días, valida marcador) y `XgEnrichedProvider` tolerante a fallos; `--understat`. **Lector de Understat NO verificado en vivo** (red bloqueada: CONNECT 403): queda `[~]` hasta probarlo en local |
 | 2026-11-04 | Re-medición w | — | Con la simulación corregida (bajas por jornada): w=0.5 frente a 1.0 → EV real 6.2% vs 4.6%, CLV 4.1% vs 2.6%, crecimiento +35% vs +27%. Decisión confirmada |
 | 2026-11-04 | #9 Empaquetado | ver git log | `pyproject.toml` (extras `ui` y `dev`), CLI movido a `predictive_odds/cli.py`, comando `predictive-odds` verificado con instalación editable fuera del repo; versión 0.2.0 |
+| 2026-11-04 | #10 Ajuste de hiperparámetros | ver git log | `tuning.py` (rolling origin, rejilla de Poisson y peso del ML) + `--tune`. En la simulación la mejor configuración varía con la semilla (mejora ≈0.3%) y el ML no aporta (datos generados con Poisson) → valores por defecto SIN cambios; decidir con datos reales |

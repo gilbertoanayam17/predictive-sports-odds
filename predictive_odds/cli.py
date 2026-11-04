@@ -39,6 +39,7 @@ from predictive_odds.backtester import BacktestConfig, Backtester, BacktestResul
 from predictive_odds.parlay_builder import ParlayConfig
 from predictive_odds.xg_sources import UnderstatProvider, XgEnrichedProvider
 from predictive_odds.statistical_models import InsufficientDataError
+from predictive_odds.tuning import tune_ml_weight, tune_poisson
 from predictive_odds.pipeline import AnalysisPipeline, AnalysisResult, PipelineConfig
 
 SEPARATOR = "=" * 100
@@ -129,6 +130,36 @@ def run_backtest(args: argparse.Namespace) -> BacktestResult:
     odds = pd.concat([provider.fetch_historical_odds(league, s) for s in seasons], ignore_index=True)
     config = BacktestConfig(initial_bankroll=args.bankroll, use_ml=not args.no_ml, include_parlays=args.parlays)
     return Backtester(history, odds, config).run()
+
+
+def run_tuning(args: argparse.Namespace) -> None:
+    """Ajuste de hiperparámetros con validación cronológica e informe en la terminal.
+
+    Args:
+        args: Argumentos de línea de comandos.
+    """
+    league = get_league(args.league)
+    seasons = (args.season - 1, args.season)
+    provider: SimulatedDataProvider | FootballDataCoUkProvider
+    if args.live:
+        provider = FootballDataCoUkProvider()
+    else:
+        provider = SimulatedDataProvider(SimulationConfig(seed=args.seed, seasons=seasons))
+    history = DataFetcher(provider).get_history(league.key, seasons)
+    tag = "" if args.live else " [DATOS SIMULADOS: solo valida la herramienta]"
+    section(f"AJUSTE DE POISSON (rolling origin; log-loss medio 1X2/OU2.5/BTTS){tag}")
+    res = tune_poisson(history, {"half_life_days": [120, 240, 480], "xg_weight": [0.0, 0.4, 0.7],
+                                 "prior_sd": [0.4, 0.6, 1.0]})
+    show(res.table.head(8).round(4))
+    print(f"Mejor: {res.best} | mejora frente a la configuración actual: {100 * res.improvement:.2f}%")
+    if not args.no_ml:
+        section("PESO DEL ML EN EL ENSAMBLE")
+        try:
+            ml = tune_ml_weight(history, [0.0, 0.2, 0.35, 0.5])
+            show(ml.table.round(4))
+        except InsufficientDataError as exc:
+            print(f"Omitido: {exc}")
+    print("\nCambia los valores por defecto solo si la mejora es consistente sobre datos REALES.")
 
 
 def print_backtest(result: BacktestResult, league_key: str, simulated: bool) -> None:
@@ -234,6 +265,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--model-path", default=None, help="Bundle .joblib: reutiliza modelos guardados y guarda al reentrenar")
     p.add_argument("--track", default=None, help="Registro SQLite: guarda las apuestas sugeridas del análisis")
     p.add_argument("--settle", action="store_true", help="Con --track: liquida pendientes y muestra el rendimiento")
+    p.add_argument("--tune", action="store_true", help="Ajustar hiperparámetros con validación cronológica")
     p.add_argument("--backtest", action="store_true", help="Ejecutar un backtest walk-forward en vez del análisis")
     p.add_argument("--parlays", action="store_true", help="Backtest: incluir también los parlays")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -252,6 +284,9 @@ def main(argv: list[str] | None = None) -> int:
         return run_tracker(args)
     try:
         league = get_league(args.league)
+        if args.tune:
+            run_tuning(args)
+            return 0
         if args.backtest:
             print_backtest(run_backtest(args), league.key, simulated=not args.live)
             return 0

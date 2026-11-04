@@ -41,6 +41,7 @@ predictive_odds/
 ├── injuries.py            # Bajas → multiplicadores de ataque/defensa sobre λ
 ├── bet_tracker.py         # Registro SQLite: apuestas, liquidación, P&L y CLV
 ├── xg_sources.py          # merge_xg (fusión de xG de cualquier fuente) + Understat (experimental)
+├── tuning.py              # Ajuste de hiperparámetros con validación cronológica
 └── pipeline.py            # AnalysisPipeline.run() → AnalysisResult (DataFrames listos para UI)
 ├── cli.py                 # CLI (también como comando `predictive-odds`)
 main.py                    # Demo de punta a punta en la terminal (envoltorio del CLI)
@@ -84,6 +85,9 @@ En competiciones internacionales, Poisson se entrena junto con las ligas domést
 
 ### Lesiones (`injuries.py`)
 Las bajas (API-Football o simuladas) se traducen en multiplicadores de ataque y defensa que modifican las λ de Poisson. Como el ML no conoce ese contexto, sus probabilidades se corrigen en la misma proporción. Medido en la simulación (20 jornadas con bajas que las casas sí descuentan), el EV real de los value bets sube de 6.3% a 6.5%, y de 5.7% a 6.1% en los partidos con bajas. La mejora es moderada porque el encogimiento hacia el mercado ya absorbía parte del efecto. Activado por defecto (`use_injuries=True`).
+
+### Ajuste de hiperparámetros (`tuning.py`, `--tune`)
+Validación *rolling origin*: en varios cortes temporales se entrena con el pasado y se evalúa en las 4 semanas siguientes (log-loss medio de 1X2, OU 2.5 y BTTS). Hace una búsqueda en rejilla de vida media, peso del xG y prior de Poisson, y del peso del ML en el ensamble. En la simulación, la "mejor" configuración cambia según la semilla y mejora solo un ≈0.3%, y el ML no aporta porque los datos se generan con Poisson. Por eso **los valores por defecto no se cambiaron**: hay que decidirlos con `python main.py --tune --live` sobre datos reales.
 
 ### Registro de apuestas (`bet_tracker.py`)
 SQLite con restricciones de integridad. Guarda sencillas y parlays (sin duplicar si se reejecuta el análisis), liquida cuando hay resultados (un parlay, cuando terminaron todas sus patas), permite anular apuestas, guarda la probabilidad de cierre para el CLV y devuelve el P&L, el ROI por mercado y la curva de bankroll. Solo registra; nunca coloca apuestas.
