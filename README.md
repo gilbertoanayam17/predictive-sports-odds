@@ -7,7 +7,8 @@ Backend en Python que analiza datos de fútbol para detectar **apuestas de valor
 ## Inicio rápido
 
 ```bash
-pip install -r requirements.txt
+pip install -e ".[dev]"          # o: pip install -r requirements.txt
+predictive-odds --help           # comando instalado (equivale a python main.py)
 python main.py                                  # EPL simulada: no necesita red ni API keys
 python main.py --league LIGA_MX --bankroll 5000
 python main.py --same-match                     # permite parlays con varias patas del mismo partido
@@ -41,7 +42,8 @@ predictive_odds/
 ├── bet_tracker.py         # Registro SQLite: apuestas, liquidación, P&L y CLV
 ├── xg_sources.py          # merge_xg (fusión de xG de cualquier fuente) + Understat (experimental)
 └── pipeline.py            # AnalysisPipeline.run() → AnalysisResult (DataFrames listos para UI)
-main.py                    # Demo de punta a punta en la terminal
+├── cli.py                 # CLI (también como comando `predictive-odds`)
+main.py                    # Demo de punta a punta en la terminal (envoltorio del CLI)
 ```
 
 **Idea central:** cada `Selection` (1X2, doble oportunidad, Over/Under x.5, BTTS, marcador exacto) se representa como una máscara booleana sobre la matriz de marcadores `P(local=i, visitante=j)`. De ahí sale todo:
@@ -75,7 +77,7 @@ Manejo de errores: timeouts, reintentos con backoff exponencial, `Retry-After` e
 ### Backtesting (`backtester.py`)
 Walk-forward fecha a fecha: reentrena solo con el pasado, apuesta con los momios pre-partido, liquida con el resultado real y mide ROI, drawdown, acierto, calibración por tramos y **CLV** contra la línea de cierre (Pinnacle en football-data.co.uk; una línea "sharp" en la simulación). La línea de cierre nunca se usa para decidir.
 
-Hallazgo medido (simulación, 4 semillas): con el modelo puro, el EV esperado medio de los picks era ≈18% y el real ≈3.8%. Encoger la probabilidad al 50% hacia el mercado sube el EV real a 5.3% y el CLV de 2.6% a 4.0%; limitar los momios a ≤ 4 empeora. Por eso el valor por defecto es `value_model_weight=0.5`. Los parlays del backtest rinden peor que las sencillas, como era de esperar por la varianza y el error compuesto del modelo.
+Hallazgo medido (simulación, 4 semillas, ≈1,400–1,800 apuestas por semilla): con el modelo puro (`value_model_weight=1.0`), el EV esperado medio de los picks es ≈18% y el real solo 4.6%. Es la "maldición del ganador": el filtro elige justo donde el modelo más se equivoca. Encoger la probabilidad al 50% hacia el mercado sube el EV real a 6.2%, el CLV de 2.6% a 4.1% y el crecimiento del bankroll de +27% a +35%; limitar los momios a ≤ 4 empeora. Por eso el valor por defecto es `value_model_weight=0.5`. Los parlays del backtest rinden peor que las sencillas, como era de esperar por la varianza y el error compuesto del modelo.
 
 ### Modelo multiliga (UCL)
 En competiciones internacionales, Poisson se entrena junto con las ligas domésticas (`extra_leagues`, por defecto la EPL para la UCL) y estima un coeficiente de fuerza por liga `L`: ataque + L y defensa − L. Dentro de una liga, L se cancela; en los cruces entre ligas es lo que permite comparar a los equipos. Medido con UCL escasa (8 jornadas de entrenamiento, 8 semillas): combinar datos baja el error de λ de 0.242 a 0.215 y el log-loss de 1.039 a 1.025. El coeficiente de liga aporta además cuando las ligas difieren mucho (0.229 → 0.220; log-loss 1.007 → 1.001).
