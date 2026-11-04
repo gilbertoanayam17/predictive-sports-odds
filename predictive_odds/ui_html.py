@@ -97,7 +97,8 @@ text-transform:none;letter-spacing:0;font-weight:500}
 .note{font-size:.8rem;color:var(--chalk-3);margin:.2rem 0 .6rem}
 .mine{margin-top:.55rem;padding:.35rem .5rem;border:1px dashed var(--amber);border-radius:4px;font-size:.8rem;
 color:var(--chalk-2)}.mine b{font-family:'IBM Plex Mono',monospace;color:var(--amber);font-weight:500}
-.why{margin:.5rem 0 0;padding-left:1rem;font-size:.76rem;color:var(--chalk-2)}.why li{margin:.1rem 0}
+.why{margin:.5rem 0 0!important;padding-left:1rem!important;color:var(--chalk-2)}
+.why li{margin:.1rem 0!important;padding:0!important;font-size:.78rem!important;line-height:1.35!important}
 .empty{border:1px dashed var(--line);border-radius:6px;padding:1.2rem;color:var(--chalk-2);text-align:center}
 @media (max-width:640px){
 .mast .word{font-size:1.55rem}.mast .sub{letter-spacing:.06em;font-size:.68rem}.mast .meta{text-align:left}

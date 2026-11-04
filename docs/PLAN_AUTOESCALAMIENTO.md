@@ -76,7 +76,7 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 28 | [x] | **"¿Por qué este pick?"**: explicación breve en cada boleto | Descartar picks absurdos |
 | 29 | [x] | **Más ligas**: Ligue 1, Eredivisie, Championship, Portugal, MLS | Más oportunidades en mercados menos eficientes |
 | 30 | [x] | **Ciclo semanal automático**: liquidar, analizar, registrar sugerencias y resumen + picks por Telegram (tarea programada semanal) | Sin depender de acordarse |
-| 31 | [ ] | **Cierre formal**: pull request, capturas en el README, versión 1.0 | Punto estable |
+| 31 | [x] | **Cierre formal**: pull request, capturas en el README, versión 1.0 | Punto estable |
 
 ## Registro de ejecución
 | Fecha (UTC) | Tarea | Commit | Notas |
@@ -122,3 +122,4 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 2026-11-04 | #28 ¿Por qué este pick? | ver git log | `explain.py`: hasta 3 frases por boleto (modelo frente a mercado; goles esperados u forma por sede según el mercado; avisos de bajas, equipo sin historial o diferencia ≥ 10 pp con el mercado, con prioridad) |
 | 2026-11-04 | #29 Más ligas | ver git log | Ligue 1 (F1), Eredivisie (N1), Championship (E1), Primeira Liga (P1) y MLS (USA, formato extra, temporada por año natural: `season_for`). Alias de nombres y 54 pares nuevos en tests (los nombres esperados de cada fuente no se pudieron verificar en vivo). Temporada por defecto según la liga en app y CLI |
 | 2026-11-04 | #30 Ciclo semanal | ver git log | `--weekly`: liquida los dos registros (gratis), analiza las ligas como jornada multiliga, registra sugerencias y envía por Telegram el resumen (real/esperado/suerte) + picks con momio mínimo en Caliente; tolerante a fallos por liga. `scripts/automatizar_windows.ps1` (viernes 10:00 por defecto, ≈ 90 créditos/mes; sustituye a alertas_windows.ps1 y elimina su tarea). Prueba de punta a punta de dos semanas simuladas. El .ps1 NO se pudo probar aquí |
+| 2026-11-04 | #31 Cierre formal | ver git log | Versión 1.0.0 y etiqueta `v1.0.0`; capturas de la app en el README (`docs/img/`). El PR queda pendiente: el repositorio no tiene rama `main` y crearla requiere permiso del usuario |

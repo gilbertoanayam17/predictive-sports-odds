@@ -119,19 +119,31 @@ Cada ejecución con `--snapshot odds.sqlite` guarda los momios (programar el an�
 ## Interfaz web (Streamlit)
 
 ```bash
-pip install -r requirements-ui.txt
+pip install -r requirements.txt
 streamlit run app.py
 ```
 
+| Predicciones | Value bets (con momio mínimo en tu casa) |
+|---|---|
+| ![Predicciones](docs/img/app-predicciones.jpg) | ![Value bets](docs/img/app-value-bets.jpg) |
+| **Mis apuestas** | **En el celular** |
+| ![Mis apuestas](docs/img/app-mis-apuestas.jpg) | ![Celular](docs/img/app-celular.jpg) |
+
 La barra lateral permite elegir la fuente de datos (simulada o real con `ODDS_API_KEY`), la liga, el bankroll, el ML y los umbrales de valor, parlays y exposición. Pestañas:
 - **Predicciones:** probabilidades por partido, análisis heurístico, ajustes por lesiones y matriz de marcadores.
-- **Value bets** y **Parlays**, con sus stakes.
+- **Value bets** y **Parlays**, con sus stakes, el momio mínimo en tu casa (`MI_CASA`, p. ej. Caliente) y "¿por qué este pick?".
 - **Tabla y ratings**, más la validación fuera de muestra.
 - **Backtest:** ROI, CLV, curva de bankroll y calibración.
 - **Registro:** guarda las apuestas sugeridas y muestra el P&L.
 - **Riesgo** (Monte Carlo) y **Multiliga** (parlays entre ligas); el informe HTML/Markdown se descarga desde la barra lateral.
+- **Rendimiento:** beneficio real frente al esperado y cuánto es suerte.
+- **Mis apuestas:** momios mínimos de la jornada y registro de lo que apostaste de verdad.
 
 La app no contiene lógica de negocio: solo llama a `AnalysisPipeline`, `Backtester` y `BetTracker`. Tiene una prueba de humo con `streamlit.testing` que corre en el CI.
+
+### Ciclo semanal automático
+
+`python main.py --weekly` liquida los registros, analiza las ligas, guarda las sugerencias y manda el resumen por Telegram. En Windows, `scripts\automatizar_windows.ps1` lo programa cada viernes a las 10:00 (≈ 90 créditos de The Odds API al mes).
 
 ## Limitaciones y próximos pasos
 - Las **lesiones** se convierten en ajustes con una heurística (3% de ataque y 2% de defensa por baja; las dudas cuentan a medias; tope del 15%). Para mejorarlo hacen falta datos de importancia por jugador (`PlayerImpact`), como minutos o goles+asistencias.
