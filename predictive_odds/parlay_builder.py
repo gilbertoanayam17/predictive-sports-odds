@@ -26,6 +26,7 @@ from dataclasses import dataclass, field, replace
 from typing import Literal, Mapping, Sequence
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from scipy.optimize import brentq
 
@@ -322,7 +323,8 @@ class ValueBetFinder:
         implied = 1.0 / frame["odds"].to_numpy(float)
         total = np.bincount(codes, implied, minlength=n_groups)
         if self.config.devig_method == "power":
-            lo, hi = np.full(n_groups, 0.2), np.full(n_groups, 5.0)
+            lo: npt.NDArray[np.float64] = np.full(n_groups, 0.2)
+            hi: npt.NDArray[np.float64] = np.full(n_groups, 5.0)
             for _ in range(60):  # bisección vectorizada de k: Σ imp^k = 1 (Σ decrece con k)
                 mid = (lo + hi) / 2
                 s_mid = np.bincount(codes, implied ** mid[codes], minlength=n_groups)

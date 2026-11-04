@@ -5,7 +5,7 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 ## Protocolo por tarea
 1. Tomar la primera tarea `[ ]` de la tabla (respetando dependencias) y marcarla `[~]`.
 2. Implementar con type hints, docstrings y manejo de errores (mismas reglas que el resto del código).
-3. Añadir tests. **Criterio de "hecho":** `python -m pytest` en verde, `mypy predictive_odds main.py` sin errores y `python main.py` funcionando.
+3. Añadir tests. **Criterio de "hecho":** `python -m pytest` en verde, `mypy predictive_odds main.py` sin errores (también con las versiones del CI en Python 3.10: numpy 2.2 y pandas-stubs 2.3, cuya verificación de tipos es más estricta) y `python main.py` funcionando. Tras cada push, confirmar que el CI quedó en verde.
 4. Commit con un mensaje descriptivo y push a `claude/ecstatic-wright-6nlr98`.
 5. Marcar `[x]`, anotar el commit y las notas en el registro, y pasar a la siguiente tarea.
 
@@ -85,3 +85,4 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 2026-11-04 | Fase 3 completada | — | Backlog 1–18 terminado salvo #8 (Understat sin verificar en vivo por bloqueo de red) |
 | 2026-11-04 | #20 Cobertura | ver git log | 82% → 90% (CLI 0% → 69%, data_fetcher 77% → 87%). **Bug real encontrado y corregido:** en el formato "extra" de football-data (Liga MX) solo hay momios de cierre, así que el backtest real de Liga MX no habría tenido precios donde apostar; ahora usa el cierre de cada casa (backtest conservador). Tests con CSV en los formatos publicados, xG/lesiones de API-Football y humo del CLI |
 | 2026-11-04 | #19 App al día | ver git log | Descarga del informe (HTML/Markdown) en la barra lateral, pestaña **Riesgo** (Monte Carlo) y pestaña **Multiliga**; pruebas AppTest de ambas y verificación visual con Playwright. Fase 4 completada |
+| 2026-11-04 | Check-in 10:53 · CI roto | ver git log | El CI fallaba desde la corrida 19 (solo mypy en Python 3.10, por la tipificación de numpy en el consenso vectorizado); los tests pasaban. No se detectó antes porque no repetí la verificación de mypy con las versiones del CI. Corregido y regla añadida al protocolo |
