@@ -39,6 +39,7 @@ from predictive_odds.backtester import BacktestConfig, Backtester, BacktestResul
 from predictive_odds.parlay_builder import ParlayConfig
 from predictive_odds.xg_sources import UnderstatProvider, XgEnrichedProvider
 from predictive_odds.statistical_models import InsufficientDataError
+from predictive_odds.risk import RiskConfig, risk_table
 from predictive_odds.tuning import tune_ml_weight, tune_poisson
 from predictive_odds.pipeline import AnalysisPipeline, AnalysisResult, PipelineConfig
 
@@ -183,6 +184,23 @@ def print_backtest(result: BacktestResult, league_key: str, simulated: bool) -> 
     print("\nCLV > 0 de forma sostenida es la mejor señal de un edge real; el ROI a corto plazo es muy ruidoso.")
 
 
+def print_risk(result: AnalysisResult, n_rounds: int) -> None:
+    """Imprime la matriz Monte Carlo de riesgo para la jornada analizada.
+
+    Args:
+        result: Resultado del análisis (sus value bets son la "jornada tipo").
+        n_rounds: Jornadas a simular.
+    """
+    section(f"RIESGO MONTE CARLO — repetir esta jornada {n_rounds} veces (bankroll final en múltiplos)")
+    if not result.value_bets:
+        print("Sin value bets: nada que simular.")
+        return
+    table = risk_table(result.value_bets, config=RiskConfig(n_rounds=n_rounds, initial_bankroll=result.bankroll))
+    show(table.round(3))
+    print("recorte_edge: 0 = el modelo acierta; 0.5 = edge real a la mitad; 1 = el modelo no aporta;"
+          " 1.5 = el modelo se equivoca en contra. p_ruina = caer por debajo del 50% del bankroll.")
+
+
 def print_report(result: AnalysisResult, simulated: bool) -> None:
     """Imprime el informe completo en la terminal.
 
@@ -265,6 +283,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--model-path", default=None, help="Bundle .joblib: reutiliza modelos guardados y guarda al reentrenar")
     p.add_argument("--track", default=None, help="Registro SQLite: guarda las apuestas sugeridas del análisis")
     p.add_argument("--settle", action="store_true", help="Con --track: liquida pendientes y muestra el rendimiento")
+    p.add_argument("--risk", action="store_true", help="Añadir simulación Monte Carlo de riesgo del bankroll")
+    p.add_argument("--risk-rounds", type=int, default=38, help="Jornadas a simular en --risk")
     p.add_argument("--tune", action="store_true", help="Ajustar hiperparámetros con validación cronológica")
     p.add_argument("--backtest", action="store_true", help="Ejecutar un backtest walk-forward en vez del análisis")
     p.add_argument("--parlays", action="store_true", help="Backtest: incluir también los parlays")
@@ -312,6 +332,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Datos insuficientes: {exc}", file=sys.stderr)
         return 5
     print_report(result, simulated=not args.live)
+    if args.risk:
+        print_risk(result, args.risk_rounds)
     if args.track:
         try:
             with BetTracker(args.track) as tracker:

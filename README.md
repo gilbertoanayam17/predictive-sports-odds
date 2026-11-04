@@ -42,6 +42,7 @@ predictive_odds/
 ├── bet_tracker.py         # Registro SQLite: apuestas, liquidación, P&L y CLV
 ├── xg_sources.py          # merge_xg (fusión de xG de cualquier fuente) + Understat (experimental)
 ├── tuning.py              # Ajuste de hiperparámetros con validación cronológica
+├── risk.py                # Monte Carlo del bankroll: ruina, drawdown, fracción de Kelly
 └── pipeline.py            # AnalysisPipeline.run() → AnalysisResult (DataFrames listos para UI)
 ├── cli.py                 # CLI (también como comando `predictive-odds`)
 main.py                    # Demo de punta a punta en la terminal (envoltorio del CLI)
@@ -85,6 +86,9 @@ En competiciones internacionales, Poisson se entrena junto con las ligas domést
 
 ### Lesiones (`injuries.py`)
 Las bajas (API-Football o simuladas) se traducen en multiplicadores de ataque y defensa que modifican las λ de Poisson. Como el ML no conoce ese contexto, sus probabilidades se corrigen en la misma proporción. Medido en la simulación (20 jornadas con bajas que las casas sí descuentan), el EV real de los value bets sube de 6.3% a 6.5%, y de 5.7% a 6.1% en los partidos con bajas. La mejora es moderada porque el encogimiento hacia el mercado ya absorbía parte del efecto. Activado por defecto (`use_injuries=True`).
+
+### Riesgo Monte Carlo (`risk.py`, `--risk`)
+Repite la jornada analizada N veces y cruza la fracción de Kelly con supuestos sobre el edge real: el modelo acierta, el edge real es la mitad, el modelo no aporta o el modelo se equivoca en contra. Resultado típico en la simulación (38 jornadas): con **¼ de Kelly y el 10% de exposición** (valores por defecto), la probabilidad de ruina es del 0% incluso en el peor escenario, y la de un drawdown mayor al 30%, del ≈5%. Con Kelly completo, en el peor escenario la probabilidad de ruina sube al ≈36%. Esto respalda los valores por defecto.
 
 ### Ajuste de hiperparámetros (`tuning.py`, `--tune`)
 Validación *rolling origin*: en varios cortes temporales se entrena con el pasado y se evalúa en las 4 semanas siguientes (log-loss medio de 1X2, OU 2.5 y BTTS). Hace una búsqueda en rejilla de vida media, peso del xG y prior de Poisson, y del peso del ML en el ensamble. En la simulación, la "mejor" configuración cambia según la semilla y mejora solo un ≈0.3%, y el ML no aporta porque los datos se generan con Poisson. Por eso **los valores por defecto no se cambiaron**: hay que decidirlos con `python main.py --tune --live` sobre datos reales.
