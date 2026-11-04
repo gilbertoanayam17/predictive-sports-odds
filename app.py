@@ -36,6 +36,7 @@ from predictive_odds.parlay_builder import ParlayConfig, ValueBetConfig
 from predictive_odds.pipeline import AnalysisPipeline, AnalysisResult, PipelineConfig, SlateResult, analyze_slate
 from predictive_odds.report import render_html, render_markdown
 from predictive_odds.risk import RiskConfig, risk_table
+from predictive_odds.settings import load_env
 from predictive_odds.statistical_models import InsufficientDataError
 
 DISCLAIMER = "Herramienta analítica: no coloca apuestas. Apostar implica riesgo de pérdida; juega con responsabilidad."
@@ -202,6 +203,7 @@ def pct(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 
 def main() -> None:
     """Construye la interfaz."""
+    env_loaded = load_env()  # claves desde .env (si existe); las variables del sistema tienen prioridad
     st.set_page_config(page_title="Predictive Sports Odds", page_icon="⚽", layout="wide")
     st.title("⚽ Predictive Sports Odds")
     st.caption(DISCLAIMER)
@@ -219,6 +221,11 @@ def main() -> None:
         if source == "Real":
             st.caption(f"[Conseguir clave de momios (gratis)]({ODDS_API_SIGNUP}) · "
                        f"[Clave de API-Football (opcional)]({API_FOOTBALL_SIGNUP})")
+            if env_loaded:
+                st.caption(f"✓ Cargado desde `.env`: {', '.join(env_loaded)}")
+            elif not os.environ.get("ODDS_API_KEY"):
+                st.caption("Consejo: guarda tus claves en un archivo `.env` (ver `.env.example`) "
+                           "para no tener que pegarlas cada vez.")
             odds_key = st.text_input("Clave de The Odds API", value=os.environ.get("ODDS_API_KEY", ""),
                                      type="password", help="Obligatoria. Plan gratuito: 500 créditos/mes")
             af_key = st.text_input("Clave de API-Football (opcional)", value=os.environ.get("API_FOOTBALL_KEY", ""),

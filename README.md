@@ -24,7 +24,8 @@ python -m pytest
 Con datos reales (histórico de football-data.co.uk + momios de The Odds API):
 
 ```bash
-export ODDS_API_KEY=...          # obligatoria
+cp .env.example .env             # y pon tus claves en .env (no se sube a GitHub)
+export ODDS_API_KEY=...          # alternativa: variable de entorno (obligatoria)
 export API_FOOTBALL_KEY=...      # opcional y de pago: lesiones/calendario (el plan gratuito no cubre la temporada actual)
 python main.py --live --league EPL
 ```

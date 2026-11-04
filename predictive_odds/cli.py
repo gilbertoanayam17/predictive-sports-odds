@@ -42,6 +42,7 @@ from predictive_odds.statistical_models import InsufficientDataError
 from predictive_odds.odds_history import OddsHistory, OddsHistoryError
 from predictive_odds.report import save_report
 from predictive_odds.risk import RiskConfig, risk_table
+from predictive_odds.settings import load_env
 from predictive_odds.tuning import tune_ml_weight, tune_poisson
 from predictive_odds.pipeline import AnalysisPipeline, AnalysisResult, PipelineConfig, SlateResult, analyze_slate
 
@@ -330,6 +331,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     """Punto de entrada: ejecuta el flujo completo y devuelve el código de salida."""
+    load_env()  # ODDS_API_KEY / API_FOOTBALL_KEY desde .env (las variables del sistema tienen prioridad)
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")

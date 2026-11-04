@@ -26,7 +26,14 @@ python -m pytest               # verificación
 4. **Clave de momios:** regístrate gratis en [the-odds-api.com](https://the-odds-api.com/#get-access) (plan *Starter*, 500 créditos al mes; la clave llega por correo). Pégala en la barra lateral y pulsa **Probar conexión**, que no gasta créditos.
 5. *(Opcional, de pago)* Una clave de [API-Football](https://dashboard.api-football.com/register) activa el ajuste por lesiones. **Su plan gratuito solo cubre temporadas antiguas (2022–2024)**, así que no sirve para la temporada actual: si no tienes un plan de pago, deja ese campo vacío.
 
-Para no tener que pegar las claves cada vez, define las variables de entorno `ODDS_API_KEY` y `API_FOOTBALL_KEY` antes de abrir la app. Nunca subas las claves al repositorio.
+**Para no pegar las claves cada vez**, guárdalas en un archivo `.env` en la carpeta del proyecto (está en `.gitignore`, así que nunca se sube a GitHub):
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+```
+
+En el archivo, escribe tu clave tras `ODDS_API_KEY=` (sin comillas ni espacios) y guárdalo. La app y el CLI lo leen al arrancar, y la barra lateral muestra "✓ Cargado desde `.env`". Si también defines la variable en el sistema, tiene prioridad sobre el `.env`.
 
 ## 2b. Claves y fuentes de datos
 
