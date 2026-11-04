@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import date
 
 import pandas as pd
-import pytest
 
 from predictive_odds.bet_tracker import BetTracker
 from predictive_odds.config import current_season

@@ -24,20 +24,16 @@ import pandas as pd
 
 from predictive_odds.config import ConfigurationError, current_season, get_league, selectable_leagues
 from predictive_odds.data_fetcher import (
-    ApiFootballProvider,
     AuthenticationError,
     DataFetcher,
     DataFetchError,
     FootballDataCoUkProvider,
-    ResultsProvider,
     SimulatedDataProvider,
     SimulationConfig,
-    TheOddsApiProvider,
 )
 from predictive_odds.bet_tracker import BetTracker, TrackerError
 from predictive_odds.backtester import BacktestConfig, Backtester, BacktestResult
 from predictive_odds.parlay_builder import ParlayConfig, Pick
-from predictive_odds.xg_sources import UnderstatProvider, XgEnrichedProvider
 from predictive_odds.statistical_models import InsufficientDataError
 from predictive_odds.odds_history import OddsHistory, OddsHistoryError
 from predictive_odds.league_study import StudyConfig, run_study, save_profiles, study_frame
@@ -45,6 +41,7 @@ from predictive_odds.notifier import NotifierError, TelegramNotifier, notify_val
 from predictive_odds.report import save_report
 from predictive_odds.risk import RiskConfig, risk_table
 from predictive_odds.settings import load_env
+from predictive_odds.sources import make_fetcher
 from predictive_odds.tuning import tune_ml_weight, tune_poisson
 from predictive_odds.pipeline import AnalysisPipeline, AnalysisResult, PipelineConfig, SlateResult, analyze_slate
 
@@ -67,47 +64,15 @@ def show(df: pd.DataFrame, empty_msg: str = "(sin resultados)") -> None:
 
 
 def build_fetcher(args: argparse.Namespace) -> DataFetcher:
-    """Construye la fachada de datos según el modo (simulado o en vivo).
-
-    Args:
-        args: Argumentos de línea de comandos.
-
-    Returns:
-        ``DataFetcher`` configurado.
+    """Fachada de datos según los argumentos (ver :func:`predictive_odds.sources.make_fetcher`).
 
     Raises:
         AuthenticationError: Si faltan API keys en modo en vivo.
     """
-    if not args.live:
-        sim = SimulatedDataProvider(SimulationConfig(seed=args.seed, seasons=(args.season - 1, args.season),
-                                                     played_rounds_current=args.played_rounds))
-        return DataFetcher(history_provider=sim, odds_provider=sim)
-    league = get_league(args.league)
-    odds_provider = TheOddsApiProvider(os.environ.get("ODDS_API_KEY", ""), include_btts=args.btts)
-    af_key = os.environ.get("API_FOOTBALL_KEY", "")
-    api_football = ApiFootballProvider(af_key) if af_key else None
-    history: ResultsProvider
-    if league.football_data_code:
-        history = FootballDataCoUkProvider()
-        if args.understat:
-            history = XgEnrichedProvider(history, UnderstatProvider())
-    elif api_football is not None:
-        history = api_football
-    else:
-        raise AuthenticationError(f"{league.name} requiere API_FOOTBALL_KEY para el histórico")
-    # Sin API-Football el calendario se deriva de los eventos de The Odds API.
-    fixtures = api_football if api_football is not None else _NoFixtures()
-    return DataFetcher(history_provider=history, fixtures_provider=fixtures, odds_provider=odds_provider)
-
-
-class _NoFixtures(ResultsProvider):
-    """Proveedor nulo: fuerza a construir el calendario desde los momios."""
-
-    name = "none"
-
-    def fetch_matches(self, league, season):  # type: ignore[no-untyped-def]
-        """Siempre falla para que el pipeline use los eventos de momios."""
-        raise DataFetchError("Sin proveedor de calendario")
+    return make_fetcher(args.live, args.league, (args.season - 1, args.season),
+                        os.environ.get("ODDS_API_KEY", ""), os.environ.get("API_FOOTBALL_KEY", ""),
+                        seed=args.seed, played_rounds=args.played_rounds, include_btts=args.btts,
+                        understat=args.understat)
 
 
 def run_backtest(args: argparse.Namespace) -> BacktestResult:

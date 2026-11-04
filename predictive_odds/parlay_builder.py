@@ -340,13 +340,13 @@ class ValueBetFinder:
         else:
             fair = implied / total[codes]
         frame = frame.assign(fair=fair)
-        cache: dict[tuple[str, str, float], Selection | None] = {}
+        cache: dict[tuple[str, str, float | None], Selection | None] = {}
         out: dict[tuple[str, Selection], float] = {}
         for (mid, mkt, sel, ln), p in frame.groupby(["mid", "mkt", "sel", "line"], dropna=False)["fair"].mean().items():
-            key = (str(mkt), str(sel), float(ln))
+            key = (str(mkt), str(sel), None if pd.isna(ln) else float(ln))  # NaN != NaN: usar None
             if key not in cache:
                 try:
-                    cache[key] = Selection.from_codes(key[0], key[1], None if np.isnan(key[2]) else key[2])
+                    cache[key] = Selection.from_codes(key[0], key[1], key[2])
                 except (ValueError, TypeError):
                     cache[key] = None
             selection = cache[key]

@@ -8,7 +8,9 @@ DataFrames; una app de Streamlit/Dash solo tiene que llamar a
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field, replace
+import hashlib
+import json
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -222,6 +224,17 @@ class AnalysisPipeline:
         logger.info("Poisson multiliga: %d partidos de %d competiciones", len(combined), len(frames))
         return PoissonModel(c.poisson).fit(combined, reference_date=history["date"].max(), team_leagues=team_leagues)
 
+    def model_fingerprint(self) -> str:
+        """Huella de la configuración que determina el modelo entrenado.
+
+        Si cambia (temporadas, ligas adicionales, Poisson, ML), un bundle guardado
+        ya no es válido aunque sea reciente.
+        """
+        c = self.config
+        payload = json.dumps({"seasons": list(c.seasons), "extra": list(c.extra_leagues), "ml": c.use_ml,
+                              "ml_weight": c.ml_weight, "poisson": asdict(c.poisson)}, sort_keys=True)
+        return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
     def get_models(self, history: pd.DataFrame) -> EnsemblePredictor:
         """Devuelve modelos listos: carga el bundle vigente o reentrena (y guarda).
 
@@ -236,7 +249,9 @@ class AnalysisPipeline:
         if c.model_path and Path(c.model_path).exists():
             try:
                 bundle = load_bundle(c.model_path, expected_league=c.league_key)
-                if not bundle.is_stale(latest, c.max_model_age_days):
+                if bundle.metadata.extra.get("config") != self.model_fingerprint():
+                    logger.info("La configuración del modelo cambió; se reentrena")
+                elif not bundle.is_stale(latest, c.max_model_age_days):
                     logger.info("Usando modelos guardados (%s)", c.model_path)
                     return bundle.ensemble
                 logger.info("Bundle desactualizado; se reentrena")
@@ -244,7 +259,8 @@ class AnalysisPipeline:
                 logger.warning("No se pudo usar el bundle guardado: %s; se reentrena", exc)
         ensemble, fe, _feats = self.fit_models(history)
         if c.model_path:
-            meta = BundleMetadata(league=c.league_key, trained_until=str(latest), n_matches=len(history))
+            meta = BundleMetadata(league=c.league_key, trained_until=str(latest), n_matches=len(history),
+                                  extra={"config": self.model_fingerprint()})
             try:
                 save_bundle(ModelBundle(ensemble, fe, meta, c.calibrator), c.model_path)
             except ModelStoreError as exc:

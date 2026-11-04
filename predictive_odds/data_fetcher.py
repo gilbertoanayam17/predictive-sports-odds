@@ -599,7 +599,10 @@ class FootballDataCoUkProvider(ResultsProvider):
     name = "football-data.co.uk"
     BASE_URL = "https://www.football-data.co.uk"
     #: Prefijos de columnas de momios por casa (formato "main").
-    BOOKMAKER_PREFIXES: dict[str, str] = {"B365": "bet365", "PS": "pinnacle", "Avg": "average", "Max": "max"}
+    #: Casas cuyos precios se usan. "Max" (mejor precio entre TODAS las casas) se excluye a propósito:
+    #: ninguna casa concreta lo ofrece y apostar a él inflaría el ROI/CLV del backtest. "Avg" (precio
+    #: medio) se conserva como aproximación conservadora de una casa típica.
+    BOOKMAKER_PREFIXES: dict[str, str] = {"B365": "bet365", "PS": "pinnacle", "Avg": "average"}
     #: Columnas de cierre de Pinnacle → se exponen como ``CLOSING_BOOKMAKER``.
     CLOSING_COLUMNS: tuple[tuple[str, str, str, float | None], ...] = (
         ("PSCH", "1X2", "HOME", None), ("PSCD", "1X2", "DRAW", None), ("PSCA", "1X2", "AWAY", None),
@@ -730,6 +733,11 @@ class FootballDataCoUkProvider(ResultsProvider):
 # =============================================================================
 # API-Football (api-sports.io, freemium)
 # =============================================================================
+#: Peticiones (ruta, parámetros) que el plan de API-Football rechazó en este proceso: no se repiten,
+#: para no gastar el cupo diario ni añadir latencia en cada análisis de la app.
+_API_FOOTBALL_PLAN_BLOCKED: set[tuple[str, str]] = set()
+
+
 class ApiFootballProvider(ResultsProvider):
     """Calendario, resultados, xG por partido y lesiones desde API-Football v3.
 
@@ -769,6 +777,9 @@ class ApiFootballProvider(ResultsProvider):
             DataFetchError: Otros errores reportados por la API.
             DataValidationError: Respuesta con forma inesperada.
         """
+        if (path, json.dumps(dict(params), sort_keys=True, default=str)) in _API_FOOTBALL_PLAN_BLOCKED:
+            raise ProviderNotSupportedError("Tu plan de API-Football no cubre esta temporada (ya comprobado; "
+                                            "no se repite la petición)")
         data = self.client.get_json(path, params)
         if not isinstance(data, dict):
             raise DataValidationError(f"Respuesta inesperada de API-Football: {type(data).__name__}")
@@ -776,6 +787,7 @@ class ApiFootballProvider(ResultsProvider):
         if errors:
             text = json.dumps(errors).lower()
             if isinstance(errors, dict) and "plan" in errors:
+                _API_FOOTBALL_PLAN_BLOCKED.add((path, json.dumps(dict(params), sort_keys=True, default=str)))
                 raise ProviderNotSupportedError(
                     f"Tu plan de API-Football no cubre esta temporada ({errors['plan']}). El plan gratuito "
                     "solo da acceso a temporadas antiguas: deja la clave vacía (las ligas con histórico en "

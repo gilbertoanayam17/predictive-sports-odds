@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
+import pandas as pd
 import requests
 
 from .parlay_builder import Parlay, Pick
@@ -173,7 +174,8 @@ def format_alert(picks: Sequence[Pick], bankroll: float, parlays: Sequence[Parla
     e = html.escape
     lines = [f"<b>⚽ {e(title or 'Value bets')}</b>"]
     for p in picks:
-        when = p.kickoff.strftime("%d/%m %H:%M") if p.kickoff is not None and hasattr(p.kickoff, "strftime") else ""
+        kick = pd.Timestamp(p.kickoff) if p.kickoff is not None else pd.NaT
+        when = "" if pd.isna(kick) else kick.strftime("%d/%m %H:%M")
         lines.append(f"\n<b>{e(p.fixture)}</b> {e(when)}\n{e(p.selection.label)} @ <b>{p.odds:.2f}</b> "
                      f"({e(p.bookmaker)})\nEV ajustado {p.adjusted_edge:+.1%} · stake {p.stake_fraction * bankroll:,.2f}")
     for par in parlays:

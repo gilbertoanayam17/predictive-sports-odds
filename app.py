@@ -22,12 +22,10 @@ from predictive_odds.bet_tracker import BetTracker, TrackerError
 from predictive_odds.config import LEAGUES, ConfigurationError, current_season, get_league, selectable_leagues
 from predictive_odds.connectivity import API_FOOTBALL_SIGNUP, ODDS_API_SIGNUP, check_all
 from predictive_odds.data_fetcher import (
-    ApiFootballProvider,
     AuthenticationError,
     DataFetcher,
     DataFetchError,
     FootballDataCoUkProvider,
-    ResultsProvider,
     SimulatedDataProvider,
     SimulationConfig,
     TheOddsApiProvider,
@@ -38,7 +36,8 @@ from predictive_odds.pipeline import AnalysisPipeline, AnalysisResult, PipelineC
 from predictive_odds.league_study import LeagueProfile, StudyConfig, run_study, save_profiles, study_frame
 from predictive_odds.report import render_html, render_markdown
 from predictive_odds.risk import RiskConfig, risk_table
-from predictive_odds.settings import load_env
+from predictive_odds.settings import env_file_keys, load_env
+from predictive_odds.sources import make_fetcher
 from predictive_odds.statistical_models import InsufficientDataError
 
 DISCLAIMER = "Herramienta analítica: no coloca apuestas. Apostar implica riesgo de pérdida; juega con responsabilidad."
@@ -46,38 +45,8 @@ DISCLAIMER = "Herramienta analítica: no coloca apuestas. Apostar implica riesgo
 
 def build_fetcher(source: str, seed: int, seasons: tuple[int, int], odds_key: str,
                   af_key: str = "", league_key: str = "EPL") -> DataFetcher:
-    """Crea la fachada de datos según la fuente elegida.
-
-    En modo real: histórico de football-data.co.uk (si la liga está ahí; si no,
-    de API-Football), momios de The Odds API y, con clave de API-Football,
-    calendario y lesiones. Sin API-Football el calendario se deduce de los momios.
-
-    Args:
-        source: ``"Simulada"`` o ``"Real"``.
-        seed: Semilla de la simulación.
-        seasons: Temporadas (anterior, actual).
-        odds_key: API key de The Odds API (solo en modo real).
-        af_key: API key de API-Football (opcional).
-        league_key: Liga principal (decide la fuente del histórico).
-
-    Returns:
-        ``DataFetcher`` configurado.
-
-    Raises:
-        AuthenticationError: Si falta una API key necesaria.
-    """
-    if source == "Simulada":
-        sim = SimulatedDataProvider(SimulationConfig(seed=seed, seasons=seasons))
-        return DataFetcher(sim, odds_provider=sim)
-    api_football = ApiFootballProvider(af_key) if af_key.strip() else None
-    if get_league(league_key).football_data_code:
-        history: ResultsProvider = FootballDataCoUkProvider()
-    elif api_football is not None:
-        history = api_football
-    else:
-        raise AuthenticationError(f"{get_league(league_key).name} requiere una clave de API-Football")
-    return DataFetcher(history, fixtures_provider=api_football or history,
-                       odds_provider=TheOddsApiProvider(odds_key.strip()))
+    """Fachada de datos de la app (misma lógica que el CLI: :func:`predictive_odds.sources.make_fetcher`)."""
+    return make_fetcher(source == "Real", league_key, seasons, odds_key, af_key, seed=seed)
 
 
 @st.cache_data(show_spinner="Entrenando modelos y buscando valor…", ttl=900)
@@ -245,7 +214,8 @@ def pct(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 
 def main() -> None:
     """Construye la interfaz."""
-    env_loaded = load_env()  # claves desde .env (si existe); las variables del sistema tienen prioridad
+    load_env()  # claves desde .env (si existe); las variables del sistema tienen prioridad
+    env_loaded = env_file_keys()  # en cada recarga, no solo la primera
     st.set_page_config(page_title="Predictive Sports Odds", page_icon="⚽", layout="wide")
     st.title("⚽ Predictive Sports Odds")
     st.caption(DISCLAIMER)

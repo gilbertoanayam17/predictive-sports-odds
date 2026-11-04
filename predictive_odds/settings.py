@@ -104,4 +104,26 @@ def load_env(path: str | Path | None = None, override: bool = False) -> list[str
     return loaded
 
 
-__all__ = ["PROJECT_ROOT", "find_env_file", "load_env", "parse_env"]
+def env_file_keys(path: str | Path | None = None) -> list[str]:
+    """Variables con valor definidas en el ``.env`` que están activas en el entorno.
+
+    A diferencia de :func:`load_env` (que solo informa de lo que carga la primera
+    vez), sirve para mostrar en cada recarga de la app qué claves vienen del ``.env``.
+
+    Returns:
+        Nombres (nunca valores).
+    """
+    if os.environ.get("PREDICTIVE_ODDS_NO_DOTENV") == "1":
+        return []
+    env_path = Path(path) if path is not None else find_env_file()
+    if env_path is None or not env_path.is_file():
+        return []
+    try:
+        raw = env_path.read_bytes()
+        text = raw.decode("utf-16") if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else raw.decode("utf-8-sig")
+    except (OSError, UnicodeDecodeError):
+        return []
+    return [k for k, v in parse_env(text).items() if v and os.environ.get(k) == v]
+
+
+__all__ = ["PROJECT_ROOT", "env_file_keys", "find_env_file", "load_env", "parse_env"]

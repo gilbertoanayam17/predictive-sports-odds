@@ -27,7 +27,7 @@ import pandas as pd
 
 from .backtester import BacktestConfig, Backtester
 from .config import ConfigurationError, current_season, get_league
-from .data_fetcher import DataFetchError, DataFetcher, ResultsProvider
+from .data_fetcher import DataFetchError, DataFetcher, ProviderNotSupportedError, ResultsProvider
 from .statistical_models import InsufficientDataError
 
 logger = logging.getLogger(__name__)
@@ -124,6 +124,8 @@ def study_league(provider: ResultsProvider, league_key: str, config: StudyConfig
         InsufficientDataError: Si el histórico es demasiado corto.
     """
     league = get_league(league_key)
+    if not callable(getattr(provider, "fetch_historical_odds", None)):
+        raise ProviderNotSupportedError(f"{provider.name} no ofrece momios históricos para el estudio")
     current = season if season is not None else current_season()
     seasons = list(range(current - config.seasons_back, current + 1))
     history = DataFetcher(provider).get_history(league_key, seasons)
@@ -158,7 +160,7 @@ def run_study(provider: ResultsProvider, leagues: Sequence[str], config: StudyCo
     for key in leagues:
         try:
             profiles[key] = study_league(provider, key, config, season)
-        except (ConfigurationError, DataFetchError, InsufficientDataError, AttributeError) as exc:
+        except (ConfigurationError, DataFetchError, InsufficientDataError) as exc:
             logger.warning("Estudio de %s omitido: %s", key, exc)
             errors[key] = str(exc)
     return profiles, errors

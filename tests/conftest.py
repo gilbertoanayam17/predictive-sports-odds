@@ -13,6 +13,9 @@ def _no_real_api_keys(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.
     (league_profiles.json, bets.sqlite, .cache/) no afectan a los tests ni se modifican.
     """
     monkeypatch.chdir(tmp_path_factory.mktemp("cwd"))
+    from predictive_odds import data_fetcher
+
+    data_fetcher._API_FOOTBALL_PLAN_BLOCKED.clear()
     monkeypatch.setenv("PREDICTIVE_ODDS_NO_DOTENV", "1")
     monkeypatch.delenv("ODDS_API_KEY", raising=False)
     monkeypatch.delenv("API_FOOTBALL_KEY", raising=False)

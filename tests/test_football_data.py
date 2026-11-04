@@ -65,7 +65,8 @@ def test_extra_format_uses_closing_prices_and_filters_season() -> None:
     assert list(matches["home_team"]) == ["Puebla"]  # solo la temporada 2025/2026
     odds = fd.fetch_historical_odds(mx, 2025)
     # Sin precios pre-partido: se usan los de cierre de cada casa como precio de apuesta
-    assert {"bet365", "average", "max"} <= set(odds["bookmaker"])
+    assert {"bet365", "average"} <= set(odds["bookmaker"])
+    assert "max" not in set(odds["bookmaker"])  # el máximo del mercado no es una casa real
     b365 = odds[(odds["bookmaker"] == "bet365") & (odds["selection"] == "HOME")]
     assert b365["odds"].iloc[0] == 2.10
 
