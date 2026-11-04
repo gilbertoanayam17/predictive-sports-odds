@@ -20,11 +20,14 @@ import streamlit as st
 from predictive_odds.backtester import BacktestConfig, Backtester, BacktestResult
 from predictive_odds.bet_tracker import BetTracker, TrackerError
 from predictive_odds.config import LEAGUES, ConfigurationError, get_league
+from predictive_odds.connectivity import API_FOOTBALL_SIGNUP, ODDS_API_SIGNUP, check_all
 from predictive_odds.data_fetcher import (
+    ApiFootballProvider,
     AuthenticationError,
     DataFetcher,
     DataFetchError,
     FootballDataCoUkProvider,
+    ResultsProvider,
     SimulatedDataProvider,
     SimulationConfig,
     TheOddsApiProvider,
@@ -38,31 +41,46 @@ from predictive_odds.statistical_models import InsufficientDataError
 DISCLAIMER = "Herramienta analítica: no coloca apuestas. Apostar implica riesgo de pérdida; juega con responsabilidad."
 
 
-def build_fetcher(source: str, seed: int, seasons: tuple[int, int], odds_key: str) -> DataFetcher:
+def build_fetcher(source: str, seed: int, seasons: tuple[int, int], odds_key: str,
+                  af_key: str = "", league_key: str = "EPL") -> DataFetcher:
     """Crea la fachada de datos según la fuente elegida.
+
+    En modo real: histórico de football-data.co.uk (si la liga está ahí; si no,
+    de API-Football), momios de The Odds API y, con clave de API-Football,
+    calendario y lesiones. Sin API-Football el calendario se deduce de los momios.
 
     Args:
         source: ``"Simulada"`` o ``"Real"``.
         seed: Semilla de la simulación.
         seasons: Temporadas (anterior, actual).
         odds_key: API key de The Odds API (solo en modo real).
+        af_key: API key de API-Football (opcional).
+        league_key: Liga principal (decide la fuente del histórico).
 
     Returns:
         ``DataFetcher`` configurado.
 
     Raises:
-        AuthenticationError: Si falta la API key en modo real.
+        AuthenticationError: Si falta una API key necesaria.
     """
     if source == "Simulada":
         sim = SimulatedDataProvider(SimulationConfig(seed=seed, seasons=seasons))
         return DataFetcher(sim, odds_provider=sim)
-    return DataFetcher(FootballDataCoUkProvider(), odds_provider=TheOddsApiProvider(odds_key))
+    api_football = ApiFootballProvider(af_key) if af_key.strip() else None
+    if get_league(league_key).football_data_code:
+        history: ResultsProvider = FootballDataCoUkProvider()
+    elif api_football is not None:
+        history = api_football
+    else:
+        raise AuthenticationError(f"{get_league(league_key).name} requiere una clave de API-Football")
+    return DataFetcher(history, fixtures_provider=api_football or history,
+                       odds_provider=TheOddsApiProvider(odds_key.strip()))
 
 
 @st.cache_data(show_spinner="Entrenando modelos y buscando valor…", ttl=900)
 def run_analysis(source: str, seed: int, league_key: str, season: int, bankroll: float, use_ml: bool,
                  min_edge: float, value_weight: float, max_legs: int, min_leg_prob: float,
-                 same_match: bool, exposure: float, odds_key: str) -> AnalysisResult:
+                 same_match: bool, exposure: float, odds_key: str, af_key: str = "") -> AnalysisResult:
     """Ejecuta el pipeline (memoizado por parámetros).
 
     Returns:
@@ -76,22 +94,32 @@ def run_analysis(source: str, seed: int, league_key: str, season: int, bankroll:
         parlay=replace(ParlayConfig(), max_legs=max_legs, min_leg_prob=min_leg_prob, allow_same_match=same_match),
         extra_leagues=("EPL",) if league.is_international and source == "Simulada" else (),
     )
-    return AnalysisPipeline(build_fetcher(source, seed, seasons, odds_key), config).run()
+    return AnalysisPipeline(build_fetcher(source, seed, seasons, odds_key, af_key, league_key), config).run()
 
 
 @st.cache_data(show_spinner="Ejecutando backtest walk-forward (puede tardar ~15 s)…", ttl=3600)
 def run_backtest(seed: int, league_key: str, season: int, bankroll: float, use_ml: bool,
-                 value_weight: float, parlays: bool) -> BacktestResult:
-    """Backtest sobre datos simulados (memoizado).
+                 value_weight: float, parlays: bool, real: bool = False) -> BacktestResult:
+    """Backtest memoizado sobre datos simulados o REALES.
+
+    Con ``real=True`` usa football-data.co.uk (resultados, momios de varias casas
+    y cierre de Pinnacle), que no requiere ninguna clave.
 
     Returns:
         Resultado del backtest.
+
+    Raises:
+        ProviderNotSupportedError: Si la liga no tiene histórico en football-data.
     """
     seasons = (season - 1, season)
     league = get_league(league_key)
-    sim = SimulatedDataProvider(SimulationConfig(seed=seed, seasons=seasons))
-    history = DataFetcher(sim).get_history(league_key, seasons)
-    odds = pd.concat([sim.fetch_historical_odds(league, s) for s in seasons], ignore_index=True)
+    provider: SimulatedDataProvider | FootballDataCoUkProvider
+    if real:
+        provider = FootballDataCoUkProvider()
+    else:
+        provider = SimulatedDataProvider(SimulationConfig(seed=seed, seasons=seasons))
+    history = DataFetcher(provider).get_history(league_key, seasons)
+    odds = pd.concat([provider.fetch_historical_odds(league, s) for s in seasons], ignore_index=True)
     config = BacktestConfig(initial_bankroll=bankroll, use_ml=use_ml, include_parlays=parlays,
                             value=replace(ValueBetConfig(), value_model_weight=value_weight))
     return Backtester(history, odds, config).run()
@@ -99,7 +127,7 @@ def run_backtest(seed: int, league_key: str, season: int, bankroll: float, use_m
 
 @st.cache_data(show_spinner="Analizando la jornada multiliga…", ttl=900)
 def run_slate(source: str, seed: int, leagues: tuple[str, ...], season: int, bankroll: float, use_ml: bool,
-              max_singles: int, odds_key: str) -> SlateResult:
+              max_singles: int, odds_key: str, af_key: str = "") -> SlateResult:
     """Jornada multiliga memoizada (parlays entre ligas y tope global).
 
     Returns:
@@ -107,7 +135,42 @@ def run_slate(source: str, seed: int, leagues: tuple[str, ...], season: int, ban
     """
     seasons = (season - 1, season)
     config = PipelineConfig(seasons=seasons, bankroll=bankroll, use_ml=use_ml, max_singles=max_singles)
-    return analyze_slate(build_fetcher(source, seed, seasons, odds_key), list(leagues), config)
+    return analyze_slate(build_fetcher(source, seed, seasons, odds_key, af_key, leagues[0]), list(leagues), config)
+
+
+def show_backtest(bt: BacktestResult) -> None:
+    """Muestra las métricas, la curva de bankroll y la calibración de un backtest."""
+    m = bt.metrics
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("ROI", f"{100 * m.get('roi', 0):.2f}%")
+    k2.metric("CLV medio", f"{100 * m.get('clv_medio', 0):.2f}%")
+    k3.metric("Crecimiento", f"{100 * m['crecimiento']:.1f}%")
+    k4.metric("Drawdown máx.", f"{100 * m.get('max_drawdown', 0):.1f}%")
+    st.caption(f"{int(m['apuestas'])} apuestas · acierto {100 * m.get('acierto', 0):.1f}% · "
+               f"momio medio {m.get('momio_medio', 0):.2f}")
+    if not bt.bankroll.empty:
+        st.line_chart(bt.bankroll.set_index("date")["bankroll"])
+    st.dataframe(bt.by_market().round(3), use_container_width=True)
+    st.subheader("Calibración")
+    st.dataframe(bt.calibration().round(3), hide_index=True, use_container_width=True)
+    st.caption("Un CLV positivo sostenido es la mejor señal de edge real; el ROI a corto plazo es ruidoso.")
+
+
+def backtest_panel(source: str, seed: int, league_key: str, season: int, bankroll: float, use_ml: bool,
+                   value_weight: float, key: str) -> None:
+    """Controles + resultado del backtest (simulado o real, según la fuente)."""
+    real = source == "Real"
+    if real:
+        st.caption("Backtest con datos REALES de football-data.co.uk (resultados, momios y cierre de Pinnacle): "
+                   "**no necesita clave**. Disponible para Premier League y Liga MX.")
+    parlays = st.toggle("Incluir parlays en el backtest", value=False, key=f"parlays_{key}")
+    if st.button("Ejecutar backtest", type="primary", key=f"bt_{key}"):
+        try:
+            bt = run_backtest(seed, league_key, season, bankroll, use_ml, value_weight, parlays, real)
+        except (InsufficientDataError, DataFetchError) as exc:
+            st.error(str(exc))
+        else:
+            show_backtest(bt)
 
 
 def pct(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
@@ -132,9 +195,19 @@ def main() -> None:
         league_key = st.selectbox("Liga", list(LEAGUES), format_func=lambda k: LEAGUES[k].name)
         season = int(st.number_input("Temporada actual", 2015, 2030, 2025))
         seed = int(st.number_input("Semilla (simulación)", 0, 10_000, 7)) if source == "Simulada" else 0
-        odds_key = ""
+        odds_key = af_key = ""
         if source == "Real":
-            odds_key = st.text_input("ODDS_API_KEY", value=os.environ.get("ODDS_API_KEY", ""), type="password")
+            st.caption(f"[Conseguir clave de momios (gratis)]({ODDS_API_SIGNUP}) · "
+                       f"[Clave de API-Football (opcional)]({API_FOOTBALL_SIGNUP})")
+            odds_key = st.text_input("Clave de The Odds API", value=os.environ.get("ODDS_API_KEY", ""),
+                                     type="password", help="Obligatoria. Plan gratuito: 500 créditos/mes")
+            af_key = st.text_input("Clave de API-Football (opcional)", value=os.environ.get("API_FOOTBALL_KEY", ""),
+                                   type="password", help="Activa lesiones, calendario y la Champions League")
+            if st.button("Probar conexión", help="No consume créditos"):
+                with st.spinner("Comprobando fuentes…"):
+                    for chk in check_all(odds_key, af_key, league_key, season):
+                        (st.success if chk.ok else st.error if chk.required else st.warning)(
+                            f"**{chk.service}**: {chk.message}")
         st.header("Modelo y apuestas")
         bankroll = float(st.number_input("Bankroll", 10.0, 1e7, 1000.0, step=100.0))
         use_ml = st.toggle("Ensamble con ML", value=True)
@@ -149,9 +222,26 @@ def main() -> None:
         st.header("Informe")
         report_slot = st.empty()
 
+    if source == "Real" and not odds_key.strip():
+        st.info(
+            "### Cómo usar datos reales\n"
+            f"1. **Crea una clave gratuita de The Odds API** en [the-odds-api.com]({ODDS_API_SIGNUP}): plan "
+            "*Starter*, 500 créditos al mes. Te llega por correo.\n"
+            "2. **Pégala** en la barra lateral (*Clave de The Odds API*) y pulsa **Probar conexión**: no gasta créditos.\n"
+            f"3. *(Opcional)* Crea una clave de [API-Football]({API_FOOTBALL_SIGNUP}) (100 peticiones/día gratis) "
+            "para activar el ajuste por lesiones y la Champions League.\n\n"
+            "El histórico de la Premier League y la Liga MX se descarga de football-data.co.uk, sin clave. "
+            "Cada análisis gasta unos 4 créditos de momios y los resultados se guardan en caché 10 minutos.\n\n"
+            "**Consejo:** antes de apostar, revisa la pestaña *Backtest* y registra las sugerencias en *Registro* "
+            "durante unas semanas sin apostar, para medir el CLV real."
+        )
+        st.subheader("Mientras tanto: valida el modelo con datos reales, sin clave")
+        backtest_panel(source, seed, league_key, season, bankroll, use_ml, value_weight, "welcome")
+        st.stop()
+
     try:
         result = run_analysis(source, seed, league_key, season, bankroll, use_ml, min_edge, value_weight,
-                              max_legs, min_leg_prob, same_match, exposure, odds_key)
+                              max_legs, min_leg_prob, same_match, exposure, odds_key, af_key)
     except (AuthenticationError, ConfigurationError) as exc:
         st.error(f"Configuración: {exc}")
         st.stop()
@@ -233,26 +323,7 @@ def main() -> None:
             st.dataframe(result.evaluation_frame().round(4), use_container_width=True)
 
     with tabs[4]:
-        if source != "Simulada":
-            st.info("El backtest de la app usa datos simulados; con datos reales usa `python main.py --backtest --live`.")
-        parlays = st.toggle("Incluir parlays en el backtest", value=False)
-        if st.button("Ejecutar backtest", type="primary"):
-            try:
-                bt = run_backtest(seed, league_key, season, bankroll, use_ml, value_weight, parlays)
-            except (InsufficientDataError, DataFetchError) as exc:
-                st.error(str(exc))
-            else:
-                m = bt.metrics
-                k1, k2, k3, k4 = st.columns(4)
-                k1.metric("ROI", f"{100 * m.get('roi', 0):.2f}%")
-                k2.metric("CLV medio", f"{100 * m.get('clv_medio', 0):.2f}%")
-                k3.metric("Crecimiento", f"{100 * m['crecimiento']:.1f}%")
-                k4.metric("Drawdown máx.", f"{100 * m.get('max_drawdown', 0):.1f}%")
-                st.line_chart(bt.bankroll.set_index("date")["bankroll"])
-                st.dataframe(bt.by_market().round(3), use_container_width=True)
-                st.subheader("Calibración")
-                st.dataframe(bt.calibration().round(3), hide_index=True, use_container_width=True)
-                st.caption("Un CLV positivo sostenido es la mejor señal de edge real; el ROI a corto plazo es ruidoso.")
+        backtest_panel(source, seed, league_key, season, bankroll, use_ml, value_weight, "tab")
 
     with tabs[5]:
         try:
@@ -294,7 +365,8 @@ def main() -> None:
         max_singles = st.slider("Máximo de sencillas", 5, 50, 15)
         if leagues and st.button("Analizar jornada", type="primary"):
             try:
-                slate = run_slate(source, seed, tuple(leagues), season, bankroll, use_ml, max_singles, odds_key)
+                slate = run_slate(source, seed, tuple(leagues), season, bankroll, use_ml, max_singles, odds_key,
+                                  af_key)
             except (DataFetchError, AuthenticationError) as exc:
                 st.error(str(exc))
             else:

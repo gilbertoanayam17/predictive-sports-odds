@@ -12,7 +12,23 @@ pip install -e ".[ui]"         # opcional: interfaz web (Streamlit)
 python -m pytest               # verificación
 ```
 
-## 2. Claves y fuentes de datos
+## 2. Primeros pasos con datos reales (en tu computadora)
+
+1. Instala Python 3.10 o superior y clona el repositorio:
+   ```bash
+   git clone https://github.com/gilbertoanayam17/predictive-sports-odds.git
+   cd predictive-sports-odds
+   git checkout claude/ecstatic-wright-6nlr98
+   pip install -e ".[ui]"
+   ```
+2. Abre la app con `streamlit run app.py`; se abre en el navegador, en `http://localhost:8501`.
+3. **Sin ninguna clave:** elige *Fuente → Real* y pulsa **Ejecutar backtest**. Valida el modelo con la Premier o la Liga MX usando resultados, momios y el cierre de Pinnacle reales de football-data.co.uk.
+4. **Clave de momios:** regístrate gratis en [the-odds-api.com](https://the-odds-api.com/#get-access) (plan *Starter*, 500 créditos al mes; la clave llega por correo). Pégala en la barra lateral y pulsa **Probar conexión**, que no gasta créditos.
+5. *(Opcional)* Para tener lesiones y la Champions League, crea una clave de [API-Football](https://dashboard.api-football.com/register) (100 peticiones/día gratis).
+
+Para no tener que pegar las claves cada vez, define las variables de entorno `ODDS_API_KEY` y `API_FOOTBALL_KEY` antes de abrir la app. Nunca subas las claves al repositorio.
+
+## 2b. Claves y fuentes de datos
 
 | Variable | Obligatoria | Para qué |
 |---|---|---|
