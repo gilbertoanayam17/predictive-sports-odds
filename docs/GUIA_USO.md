@@ -126,6 +126,8 @@ Repite el estudio cada pocos meses. Para volver a ver todos los mercados, borra 
 
 Las apuestas se emparejan con los resultados aunque cada fuente use IDs y nombres distintos ("Hull City" en los momios, "Hull" en los resultados), por equipos y fecha de inicio.
 
+**Pestaña Rendimiento:** compara tu beneficio real con el **esperado según el cierre**. La diferencia es la **suerte**, medida en desviaciones típicas: entre −2 y +2 es variación normal. Incluye el desglose por liga y por mercado, las rachas y la curva real frente a la esperada. Si el ROI esperado es positivo, tienes ventaja aunque en el corto plazo pierdas. Si es negativo, ganar es suerte.
+
 **Desde la terminal:**
 
 ```bash

@@ -33,6 +33,7 @@ from predictive_odds.data_fetcher import (
     TheOddsApiProvider,
 )
 from predictive_odds.parlay_builder import ParlayConfig, ValueBetConfig
+from predictive_odds.performance import breakdown, cumulative, summarize
 from predictive_odds.pipeline import AnalysisPipeline, AnalysisResult, PipelineConfig, SlateResult, analyze_slate
 from predictive_odds.league_study import LeagueProfile, StudyConfig, run_study, save_profiles, study_frame
 from predictive_odds.report import render_html, render_markdown
@@ -352,7 +353,7 @@ def main() -> None:
                            file_name=f"informe_{league_key}.md", mime="text/markdown")
 
     tabs = st.tabs(["Predicciones", "Value bets", "Parlays", "Tabla y ratings", "Backtest", "Registro",
-                    "Riesgo", "Multiliga"])
+                    "Riesgo", "Multiliga", "Rendimiento"])
 
     with tabs[0]:
         st.dataframe(pct(result.predictions_frame().drop(columns="match_id"), ["P(1)", "P(X)", "P(2)", "P(O2.5)", "P(BTTS)"]),
@@ -483,6 +484,46 @@ def main() -> None:
                                                             "EV_ajustado"]), hide_index=True, use_container_width=True)
                 st.dataframe(pct(slate.parlays_frame(), ["p_conjunta", "p_implícita", "EV"]),
                              hide_index=True, use_container_width=True)
+
+    with tabs[8]:
+        performance_panel(db_path)
+
+
+def performance_panel(db_path: str) -> None:
+    """Rendimiento real del registro: habilidad (según el cierre) frente a suerte."""
+    st.subheader("Rendimiento real: habilidad frente a suerte")
+    st.caption("El beneficio *esperado* usa la probabilidad justa del momio de cierre (la mejor estimación de "
+               "la probabilidad real) cuando se conoce; si no, la del modelo. Real − esperado = suerte.")
+    try:
+        with BetTracker(db_path) as tracker:
+            bets = tracker.bets()
+    except TrackerError as exc:
+        st.error(f"Registro de apuestas: {exc}")
+        return
+    summary = summarize(bets)
+    if summary.bets == 0:
+        st.info("Aún no hay apuestas liquidadas. Registra sugerencias en la pestaña *Registro* y liquídalas "
+                "cuando se jueguen los partidos.")
+        return
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Beneficio real", f"{summary.profit:,.2f}", f"ROI {summary.roi:+.1%}")
+    m2.metric("Beneficio esperado", f"{summary.expected_profit:,.2f}", f"ROI {summary.expected_roi:+.1%}")
+    m3.metric("Suerte", f"{summary.luck:+,.2f}", f"{summary.luck_z:+.1f} desv. típicas", delta_color="off")
+    m4.metric("Racha actual", f"{summary.current_streak:+d}", f"peor racha perdedora: {summary.longest_losing_streak}",
+              delta_color="off")
+    st.info(summary.verdict())
+    if summary.closing_coverage < 0.5:
+        st.caption(f"Solo el {summary.closing_coverage:.0%} de las apuestas tiene momio de cierre: el esperado "
+                   "usa sobre todo la probabilidad del modelo (optimista). Usa capturas de momios para tener "
+                   "el cierre propio.")
+    st.line_chart(cumulative(bets).set_index("n")[["real", "esperado"]])
+    left, right = st.columns(2)
+    left.markdown("**Por liga**")
+    left.dataframe(pct(breakdown(bets, "league"), ["roi", "roi_esperado", "clv_medio", "acierto"]).round(2),
+                   hide_index=True, use_container_width=True)
+    right.markdown("**Por mercado**")
+    right.dataframe(pct(breakdown(bets, "market"), ["roi", "roi_esperado", "clv_medio", "acierto"]).round(2),
+                    hide_index=True, use_container_width=True)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ def test_app_renders_and_registers_bets(tmp_path: Path) -> None:
     at.run()
     assert not at.exception, at.exception
     assert [m.label for m in at.metric][:3] == ["Partidos analizados", "Value bets", "Parlays"]
-    assert len(at.tabs) == 8
+    assert len(at.tabs) == 9
 
     at.text_input[0].set_value(str(tmp_path / "bets.sqlite")).run()  # ruta del registro
     register = next(b for b in at.button if b.label == "Registrar las apuestas sugeridas")
@@ -82,3 +82,24 @@ def test_app_league_study_panel() -> None:
     next(b for b in at.button if b.label == "Ejecutar estudio").click().run()
     assert not at.exception, at.exception
     assert any("no se guardan" in i.value for i in at.info)  # simulado: no guarda perfiles
+
+
+def test_app_performance_tab_with_settled_bets(tmp_path: Path) -> None:
+    import pandas as pd
+
+    from predictive_odds.bet_tracker import BetTracker
+    from predictive_odds.domain import Selection
+    from predictive_odds.parlay_builder import Pick
+
+    db = tmp_path / "perf.sqlite"
+    kick = pd.Timestamp("2026-11-08 15:00", tz="UTC")
+    with BetTracker(db) as t:
+        for i in range(3):
+            t.record_pick(Pick(f"m{i}", "EPL", "H", "A", kick, Selection.home(), 2.1, "b", 0.55), 10)
+        t.settle(pd.DataFrame([{"match_id": f"m{i}", "home_team": "H", "away_team": "A", "date": kick,
+                                "home_goals": i % 2, "away_goals": 0, "status": "FT"} for i in range(3)]))
+    at = AppTest.from_file(APP, default_timeout=120)
+    at.run()
+    at.text_input[0].set_value(str(db)).run()
+    assert not at.exception, at.exception
+    assert any(m.label == "Beneficio esperado" for m in at.metric)
