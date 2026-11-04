@@ -93,7 +93,65 @@ LEAGUES: dict[str, LeagueConfig] = {
             "Mazatlan", "Juarez", "Atletico San Luis",
         ),
     ),
+    "LA_LIGA": LeagueConfig(
+        key="LA_LIGA",
+        name="La Liga",
+        country="Spain",
+        api_football_id=140,
+        odds_api_sport_key="soccer_spain_la_liga",
+        football_data_code="SP1",
+        football_data_format="main",
+        sample_teams=(
+            "Alaves", "Athletic Club", "Atletico Madrid", "Barcelona", "Celta Vigo",
+            "Elche", "Espanyol", "Getafe", "Girona", "Levante",
+            "Mallorca", "Osasuna", "Rayo Vallecano", "Real Betis", "Real Madrid",
+            "Real Oviedo", "Real Sociedad", "Sevilla", "Valencia", "Villarreal",
+        ),
+    ),
+    "SERIE_A": LeagueConfig(
+        key="SERIE_A",
+        name="Serie A",
+        country="Italy",
+        api_football_id=135,
+        odds_api_sport_key="soccer_italy_serie_a",
+        football_data_code="I1",
+        football_data_format="main",
+        sample_teams=(
+            "Atalanta", "Bologna", "Cagliari", "Como", "Cremonese",
+            "Fiorentina", "Genoa", "Hellas Verona", "Inter", "Juventus",
+            "Lazio", "Lecce", "Milan", "Napoli", "Parma",
+            "Pisa", "Roma", "Sassuolo", "Torino", "Udinese",
+        ),
+    ),
+    "BUNDESLIGA": LeagueConfig(
+        key="BUNDESLIGA",
+        name="Bundesliga",
+        country="Germany",
+        api_football_id=78,
+        odds_api_sport_key="soccer_germany_bundesliga",
+        football_data_code="D1",
+        football_data_format="main",
+        sample_teams=(
+            "Augsburg", "Bayer Leverkusen", "Bayern Munich", "Borussia Dortmund",
+            "Borussia Monchengladbach", "Eintracht Frankfurt", "FC Koln", "Freiburg",
+            "Hamburger SV", "Heidenheim", "Hoffenheim", "Mainz", "RB Leipzig",
+            "St Pauli", "Union Berlin", "VfB Stuttgart", "Werder Bremen", "Wolfsburg",
+        ),
+    ),
 }
+
+
+def selectable_leagues() -> list[str]:
+    """Ligas que se ofrecen en la app/CLI: las que funcionan con fuentes gratuitas.
+
+    Las competiciones internacionales (UCL) quedan fuera: requieren API-Football
+    y su plan gratuito no cubre la temporada en curso. El código multiliga se
+    conserva para quien tenga un plan de pago.
+
+    Returns:
+        Claves de liga en el orden del registro.
+    """
+    return [k for k, cfg in LEAGUES.items() if not cfg.is_international]
 
 
 def get_league(key: str) -> LeagueConfig:

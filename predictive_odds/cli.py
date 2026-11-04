@@ -294,7 +294,7 @@ def print_report(result: AnalysisResult, simulated: bool) -> None:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parsea los argumentos de línea de comandos."""
     p = argparse.ArgumentParser(description="Value bets y parlays con modelos estadísticos")
-    p.add_argument("--league", default="EPL", help="EPL, UCL o LIGA_MX")
+    p.add_argument("--league", default="EPL", help="EPL, LA_LIGA, SERIE_A, BUNDESLIGA o LIGA_MX")
     p.add_argument("--leagues", nargs="+", default=None,
                    help="Jornada multiliga (p. ej. --leagues EPL LIGA_MX UCL): parlays entre ligas y tope global")
     p.add_argument("--max-singles", type=int, default=None, help="Máximo de sencillas sugeridas (mayor EV ajustado)")

@@ -19,7 +19,7 @@ import streamlit as st
 
 from predictive_odds.backtester import BacktestConfig, Backtester, BacktestResult
 from predictive_odds.bet_tracker import BetTracker, TrackerError
-from predictive_odds.config import LEAGUES, ConfigurationError, current_season, get_league
+from predictive_odds.config import LEAGUES, ConfigurationError, current_season, get_league, selectable_leagues
 from predictive_odds.connectivity import API_FOOTBALL_SIGNUP, ODDS_API_SIGNUP, check_all
 from predictive_odds.data_fetcher import (
     ApiFootballProvider,
@@ -180,7 +180,7 @@ def backtest_panel(source: str, seed: int, league_key: str, season: int, bankrol
     real = source == "Real"
     if real:
         st.caption("Backtest con datos REALES de football-data.co.uk (resultados, momios y cierre de Pinnacle): "
-                   "**no necesita clave**. Disponible para Premier League y Liga MX.")
+                   "**no necesita clave**. Disponible para todas las ligas de la lista.")
     parlays = st.toggle("Incluir parlays en el backtest", value=False, key=f"parlays_{key}")
     if st.button("Ejecutar backtest", type="primary", key=f"bt_{key}"):
         try:
@@ -210,7 +210,7 @@ def main() -> None:
         st.header("Datos")
         source = st.radio("Fuente", ["Simulada", "Real"], horizontal=True,
                           help="Real: histórico de football-data.co.uk + momios de The Odds API")
-        league_key = st.selectbox("Liga", list(LEAGUES), format_func=lambda k: LEAGUES[k].name)
+        league_key = st.selectbox("Liga", selectable_leagues(), format_func=lambda k: LEAGUES[k].name)
         season = int(st.number_input("Temporada actual", 2015, 2035, current_season(),
                                      help="Año de inicio de la temporada en curso (2026 = 2026/27). "
                                           "Se entrena con esta y la anterior."))
@@ -222,7 +222,8 @@ def main() -> None:
             odds_key = st.text_input("Clave de The Odds API", value=os.environ.get("ODDS_API_KEY", ""),
                                      type="password", help="Obligatoria. Plan gratuito: 500 créditos/mes")
             af_key = st.text_input("Clave de API-Football (opcional)", value=os.environ.get("API_FOOTBALL_KEY", ""),
-                                   type="password", help="Activa lesiones, calendario y la Champions League")
+                                   type="password", help="Activa el ajuste por lesiones. Requiere plan de pago: "
+                                                         "el gratuito no cubre la temporada actual")
             if st.button("Probar conexión", help="No consume créditos"):
                 with st.spinner("Comprobando fuentes…"):
                     for chk in check_all(odds_key, af_key, league_key, season):
@@ -253,9 +254,10 @@ def main() -> None:
             f"1. **Crea una clave gratuita de The Odds API** en [the-odds-api.com]({ODDS_API_SIGNUP}): plan "
             "*Starter*, 500 créditos al mes. Te llega por correo.\n"
             "2. **Pégala** en la barra lateral (*Clave de The Odds API*) y pulsa **Probar conexión**: no gasta créditos.\n"
-            f"3. *(Opcional)* Crea una clave de [API-Football]({API_FOOTBALL_SIGNUP}) (100 peticiones/día gratis) "
-            "para activar el ajuste por lesiones y la Champions League.\n\n"
-            "El histórico de la Premier League y la Liga MX se descarga de football-data.co.uk, sin clave. "
+            f"3. *(Opcional, de pago)* Una clave de [API-Football]({API_FOOTBALL_SIGNUP}) activa el ajuste por "
+            "lesiones. Su plan gratuito solo cubre temporadas antiguas, así que no sirve para la actual.\n\n"
+            "El histórico de la Premier League, La Liga, Serie A, Bundesliga y Liga MX se descarga de "
+            "football-data.co.uk, sin clave. "
             "Cada análisis gasta unos 4 créditos de momios y los resultados se guardan en caché 10 minutos.\n\n"
             "**Consejo:** antes de apostar, revisa la pestaña *Backtest* y registra las sugerencias en *Registro* "
             "durante unas semanas sin apostar, para medir el CLV real."
@@ -404,7 +406,7 @@ def main() -> None:
     with tabs[7]:
         st.subheader("Jornada multiliga")
         st.caption("Analiza varias ligas, permite parlays entre ellas y aplica el tope de exposición de forma global.")
-        leagues = st.multiselect("Ligas", list(LEAGUES), default=["EPL", "LIGA_MX"],
+        leagues = st.multiselect("Ligas", selectable_leagues(), default=["EPL", "LA_LIGA", "SERIE_A"],
                                  format_func=lambda k: LEAGUES[k].name)
         max_singles = st.slider("Máximo de sencillas", 5, 50, 15)
         if leagues and st.button("Analizar jornada", type="primary"):

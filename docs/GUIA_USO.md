@@ -24,16 +24,19 @@ python -m pytest               # verificación
 2. Abre la app con `streamlit run app.py`; se abre en el navegador, en `http://localhost:8501`.
 3. **Sin ninguna clave:** elige *Fuente → Real* y pulsa **Ejecutar backtest**. Valida el modelo con la Premier o la Liga MX usando resultados, momios y el cierre de Pinnacle reales de football-data.co.uk.
 4. **Clave de momios:** regístrate gratis en [the-odds-api.com](https://the-odds-api.com/#get-access) (plan *Starter*, 500 créditos al mes; la clave llega por correo). Pégala en la barra lateral y pulsa **Probar conexión**, que no gasta créditos.
-5. *(Opcional)* Para tener lesiones y la Champions League, crea una clave de [API-Football](https://dashboard.api-football.com/register) (100 peticiones/día gratis).
+5. *(Opcional, de pago)* Una clave de [API-Football](https://dashboard.api-football.com/register) activa el ajuste por lesiones. **Su plan gratuito solo cubre temporadas antiguas (2022–2024)**, así que no sirve para la temporada actual: si no tienes un plan de pago, deja ese campo vacío.
 
 Para no tener que pegar las claves cada vez, define las variables de entorno `ODDS_API_KEY` y `API_FOOTBALL_KEY` antes de abrir la app. Nunca subas las claves al repositorio.
 
 ## 2b. Claves y fuentes de datos
 
+Ligas disponibles: **Premier League, La Liga, Serie A, Bundesliga y Liga MX**. Todas tienen histórico gratuito en football-data.co.uk y momios en The Odds API. La Champions League no aparece en la app porque necesitaría API-Football de pago.
+
+
 | Variable | Obligatoria | Para qué |
 |---|---|---|
 | `ODDS_API_KEY` | Sí (modo real) | Momios en vivo ([the-odds-api.com](https://the-odds-api.com), 500 créditos/mes gratis) |
-| `API_FOOTBALL_KEY` | No | Calendario, lesiones y la UCL ([api-football](https://www.api-football.com), 100 peticiones/día gratis) |
+| `API_FOOTBALL_KEY` | No (de pago) | Lesiones y calendario ([api-football](https://www.api-football.com)); el plan gratuito no cubre la temporada actual |
 
 - El histórico de la EPL y la Liga MX viene de football-data.co.uk (gratis, sin clave).
 - Sin `API_FOOTBALL_KEY`, el calendario se deduce de los eventos de momios y no hay ajuste por lesiones.
@@ -101,7 +104,7 @@ python main.py --live --league EPL --tune        # hiperparámetros con validaci
 
 **Desde la app** (pestaña *Registro*):
 1. Tras analizar la jornada, pulsa **Registrar las apuestas sugeridas**. Se guardan en el archivo SQLite que indica la barra lateral (por defecto `bets.sqlite` en la carpeta del proyecto). Registrar no coloca apuestas y volver a registrar no duplica.
-2. Cuando se hayan jugado los partidos, pulsa **Liquidar con resultados**. football-data.co.uk suele publicar los resultados 1-2 días después; con clave de API-Football llegan antes.
+2. Cuando se hayan jugado los partidos, pulsa **Liquidar con resultados**. football-data.co.uk suele publicar los resultados 1-2 días después; con un plan de pago de API-Football llegan antes.
 3. La misma pestaña muestra el beneficio, el ROI, el historial y la curva de bankroll.
 
 Las apuestas se emparejan con los resultados aunque cada fuente use IDs y nombres distintos ("Hull City" en los momios, "Hull" en los resultados), por equipos y fecha de inicio.

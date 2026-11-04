@@ -103,8 +103,12 @@ def check_api_football(api_key: str, client: HttpClient | None = None) -> Connec
     resp = data.get("response", {}) if isinstance(data, dict) else {}
     req = resp.get("requests", {}) if isinstance(resp, dict) else {}
     plan = (resp.get("subscription") or {}).get("plan", "?") if isinstance(resp, dict) else "?"
-    return ConnectionCheck(name, True, f"Clave válida · plan {plan} · peticiones hoy: "
-                                       f"{req.get('current', '?')}/{req.get('limit_day', '?')}", required=False)
+    usage = f"peticiones hoy: {req.get('current', '?')}/{req.get('limit_day', '?')}"
+    if str(plan).lower() == "free":
+        return ConnectionCheck(name, False, f"Clave válida, pero el plan gratuito solo cubre temporadas antiguas: "
+                                            f"no sirve para la temporada actual (lesiones, calendario). Puedes "
+                                            f"dejarla vacía · {usage}", required=False)
+    return ConnectionCheck(name, True, f"Clave válida · plan {plan} · {usage}", required=False)
 
 
 def check_football_data(league_key: str, season: int, provider: FootballDataCoUkProvider | None = None

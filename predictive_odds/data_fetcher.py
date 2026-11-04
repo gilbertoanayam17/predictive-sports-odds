@@ -345,6 +345,25 @@ DEFAULT_TEAM_ALIASES: dict[str, str] = {
     "santos": "santos laguna",
     "queretaro fc": "queretaro",
     "fc juarez": "juarez",
+    # La Liga (football-data.co.uk abrevia)
+    "ath bilbao": "athletic bilbao",
+    "athletic club": "athletic bilbao",
+    "ath madrid": "atletico madrid",
+    "celta": "celta vigo",
+    "espanol": "espanyol",
+    "vallecano": "rayo vallecano",
+    "betis": "real betis",
+    "sociedad": "real sociedad",
+    "real oviedo": "oviedo",
+    # Serie A
+    "verona": "hellas verona",
+    # Bundesliga
+    "m gladbach": "borussia monchengladbach",
+    "monchengladbach": "borussia monchengladbach",
+    "ein frankfurt": "eintracht frankfurt",
+    "hamburger sv": "hamburg",
+    "fc koln": "koln",
+    "1 koln": "koln",
 }
 
 
@@ -756,6 +775,11 @@ class ApiFootballProvider(ResultsProvider):
         errors = data.get("errors")
         if errors:
             text = json.dumps(errors).lower()
+            if isinstance(errors, dict) and "plan" in errors:
+                raise ProviderNotSupportedError(
+                    f"Tu plan de API-Football no cubre esta temporada ({errors['plan']}). El plan gratuito "
+                    "solo da acceso a temporadas antiguas: deja la clave vacía (las ligas con histórico en "
+                    "football-data.co.uk no la necesitan) o usa un plan de pago.")
             if "token" in text or "key" in text:
                 raise AuthenticationError(f"API-Football: {errors}")
             if "request" in text or "limit" in text:
@@ -1049,7 +1073,8 @@ class SimulationConfig:
     closing_noise: float = 0.03
     closing_margin: float = 0.025
     ah_lines: tuple[float, ...] = (-1.0, -0.75, -0.25, 0.25)
-    league_offsets: dict[str, float] = field(default_factory=lambda: {"EPL": 0.20, "LIGA_MX": -0.20, "OTHER": 0.15})
+    league_offsets: dict[str, float] = field(default_factory=lambda: {
+        "EPL": 0.20, "LA_LIGA": 0.15, "SERIE_A": 0.10, "BUNDESLIGA": 0.10, "LIGA_MX": -0.20, "OTHER": 0.05})
     injury_rate: float = 0.35
     injury_max_players: int = 3
     injury_attack_effect: float = 0.04

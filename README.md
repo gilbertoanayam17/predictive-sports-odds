@@ -1,6 +1,6 @@
 # predictive-sports-odds
 
-Backend en Python que analiza datos de fútbol para detectar **apuestas de valor** y construir **parlays** con gestión de riesgo (Kelly modificado). Empieza con Premier League, Champions League y Liga MX; la arquitectura no depende de ninguna liga ni deporte.
+Backend en Python que analiza datos de fútbol para detectar **apuestas de valor** y construir **parlays** con gestión de riesgo (Kelly modificado). Cubre Premier League, La Liga, Serie A, Bundesliga y Liga MX, todas con fuentes gratuitas; la arquitectura no depende de ninguna liga ni deporte.
 
 > La reflexión de la Fase 1 (fuentes de datos y features) está en [`docs/fase1_reflexion.md`](docs/fase1_reflexion.md).
 > Guía práctica de operación diaria: [`docs/GUIA_USO.md`](docs/GUIA_USO.md). Progreso autónomo: [`docs/PLAN_AUTOESCALAMIENTO.md`](docs/PLAN_AUTOESCALAMIENTO.md).
@@ -15,7 +15,7 @@ python main.py --league LIGA_MX --bankroll 5000
 python main.py --same-match                     # permite parlays con varias patas del mismo partido
 python main.py --backtest                       # backtest walk-forward: ROI, CLV, drawdown, calibración
 python main.py --report informe.html            # informe exportable (.html o .md); --risk añade el Monte Carlo
-python main.py --leagues EPL LIGA_MX UCL --max-singles 12   # jornada multiliga con parlays entre ligas
+python main.py --leagues EPL LA_LIGA SERIE_A BUNDESLIGA --max-singles 12   # jornada multiliga
 python main.py --track bets.sqlite              # guarda las apuestas sugeridas (idempotente)
 python main.py --track bets.sqlite --settle --played-rounds 29   # liquida (en la simulación, juega la jornada 29)
 python -m pytest
@@ -25,7 +25,7 @@ Con datos reales (histórico de football-data.co.uk + momios de The Odds API):
 
 ```bash
 export ODDS_API_KEY=...          # obligatoria
-export API_FOOTBALL_KEY=...      # opcional: calendario, lesiones, UCL
+export API_FOOTBALL_KEY=...      # opcional y de pago: lesiones/calendario (el plan gratuito no cubre la temporada actual)
 python main.py --live --league EPL
 ```
 
@@ -86,7 +86,7 @@ Walk-forward fecha a fecha: reentrena solo con el pasado, apuesta con los momios
 
 Hallazgo medido (simulación, 4 semillas, ≈1,400–1,800 apuestas por semilla): con el modelo puro (`value_model_weight=1.0`), el EV esperado medio de los picks es ≈18% y el real solo 4.6%. Es la "maldición del ganador": el filtro elige justo donde el modelo más se equivoca. Encoger la probabilidad al 50% hacia el mercado sube el EV real a 6.2%, el CLV de 2.6% a 4.1% y el crecimiento del bankroll de +27% a +35%; limitar los momios a ≤ 4 empeora. Por eso el valor por defecto es `value_model_weight=0.5`. Los parlays del backtest rinden peor que las sencillas, como era de esperar por la varianza y el error compuesto del modelo.
 
-### Modelo multiliga (UCL)
+### Modelo multiliga (UCL; requiere API-Football de pago, oculto en la app)
 En competiciones internacionales, Poisson se entrena junto con las ligas domésticas (`extra_leagues`, por defecto la EPL para la UCL) y estima un coeficiente de fuerza por liga `L`: ataque + L y defensa − L. Dentro de una liga, L se cancela; en los cruces entre ligas es lo que permite comparar a los equipos. Medido con UCL escasa (8 jornadas de entrenamiento, 8 semillas): combinar datos baja el error de λ de 0.242 a 0.215 y el log-loss de 1.039 a 1.025. El coeficiente de liga aporta además cuando las ligas difieren mucho (0.229 → 0.220; log-loss 1.007 → 1.001).
 
 ### Lesiones (`injuries.py`)
@@ -133,7 +133,7 @@ La app no contiene lógica de negocio: solo llama a `AnalysisPipeline`, `Backtes
 
 ## Limitaciones y próximos pasos
 - Las **lesiones** se convierten en ajustes con una heurística (3% de ataque y 2% de defensa por baja; las dudas cuentan a medias; tope del 15%). Para mejorarlo hacen falta datos de importancia por jugador (`PlayerImpact`), como minutos o goles+asistencias.
-- **Multiliga:** solo la EPL está configurada como liga doméstica de los participantes de la UCL. Para la UCL real hay que registrar LaLiga, Serie A, Bundesliga y Ligue 1 (`register_league`) y pasarlas en `--extra-leagues`.
+- **Champions League:** el código multiliga está, pero la UCL no se ofrece en la app ni en el CLI porque su histórico solo llega por API-Football, cuyo plan gratuito no cubre la temporada actual. Con un plan de pago se puede usar con `--league UCL --extra-leagues EPL LA_LIGA SERIE_A BUNDESLIGA`.
 - Los momios de un parlay del mismo partido se calculan como producto; un *Bet Builder* real los ajusta por correlación (el sistema lo avisa).
 - **Understat** (`--live --understat`): el lector está implementado y probado contra el formato documentado del sitio, pero **no se ha podido verificar en vivo** porque la red del entorno de desarrollo bloquea understat.com. Hay que probarlo en local. Si falla, el sistema sigue funcionando sin xG. La fusión `merge_xg` (nombres normalizados, fecha ±2 días y verificación del marcador) sí está verificada.
 

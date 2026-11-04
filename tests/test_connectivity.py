@@ -42,10 +42,13 @@ def test_odds_api_check() -> None:
 
 
 def test_api_football_check_is_optional() -> None:
-    payload = {"errors": [], "response": {"subscription": {"plan": "Free"},
-                                          "requests": {"current": 3, "limit_day": 100}}}
+    payload = {"errors": [], "response": {"subscription": {"plan": "Pro"},
+                                          "requests": {"current": 3, "limit_day": 7500}}}
     ok = check_api_football("k", _client(_Resp(200, payload)))
-    assert ok.ok and "3/100" in ok.message and not ok.required
+    assert ok.ok and "3/7500" in ok.message and not ok.required
+    free = {"errors": [], "response": {"subscription": {"plan": "Free"}, "requests": {"current": 1, "limit_day": 100}}}
+    warn = check_api_football("k", _client(_Resp(200, free)))
+    assert not warn.ok and "temporada actual" in warn.message
     bad = check_api_football("k", _client(_Resp(200, {"errors": {"token": "invalid"}, "response": []})))
     assert not bad.ok and not bad.required
     assert not check_api_football("").ok
