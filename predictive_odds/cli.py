@@ -22,7 +22,7 @@ import sys
 
 import pandas as pd
 
-from predictive_odds.config import ConfigurationError, current_season, get_league
+from predictive_odds.config import ConfigurationError, current_season, get_league, selectable_leagues
 from predictive_odds.data_fetcher import (
     ApiFootballProvider,
     AuthenticationError,
@@ -40,6 +40,7 @@ from predictive_odds.parlay_builder import ParlayConfig
 from predictive_odds.xg_sources import UnderstatProvider, XgEnrichedProvider
 from predictive_odds.statistical_models import InsufficientDataError
 from predictive_odds.odds_history import OddsHistory, OddsHistoryError
+from predictive_odds.league_study import StudyConfig, run_study, save_profiles, study_frame
 from predictive_odds.report import save_report
 from predictive_odds.risk import RiskConfig, risk_table
 from predictive_odds.settings import load_env
@@ -164,6 +165,38 @@ def run_tuning(args: argparse.Namespace) -> None:
         except InsufficientDataError as exc:
             print(f"Omitido: {exc}")
     print("\nCambia los valores por defecto solo si la mejora es consistente sobre datos REALES.")
+
+
+def run_league_study(args: argparse.Namespace) -> None:
+    """Estudio por liga y mercado; guarda los perfiles que la app/CLI aplican después.
+
+    Args:
+        args: Argumentos de línea de comandos.
+    """
+    leagues = [k.upper() for k in args.leagues] if args.leagues else selectable_leagues()
+    if args.live:
+        provider: SimulatedDataProvider | FootballDataCoUkProvider = FootballDataCoUkProvider()
+        season = args.season
+    else:
+        season = args.season
+        provider = SimulatedDataProvider(SimulationConfig(
+            seed=args.seed, seasons=tuple(range(season - args.study_seasons, season + 1))))
+    tag = "" if args.live else " [DATOS SIMULADOS: solo valida la herramienta]"
+    section(f"ESTUDIO POR LIGA Y MERCADO ({args.study_seasons + 1} temporadas){tag}")
+    profiles, errors = run_study(provider, leagues, StudyConfig(seasons_back=args.study_seasons, use_ml=False),
+                                 season)
+    for key, err in errors.items():
+        print(f"⚠ {key} omitida: {err}")
+    frame = study_frame(profiles)
+    for col in ("roi", "clv", "clv_positivo"):
+        frame[col] = (100 * frame[col].astype(float)).round(1)
+    show(frame)
+    for key, prof in profiles.items():
+        print(f"  {get_league(key).name}: {', '.join(prof.markets) if prof.markets else 'NINGÚN mercado'} recomendado(s)")
+    if profiles and args.live:
+        print(f"\nPerfiles guardados en {save_profiles(profiles)}: la app y el CLI solo sugerirán esos mercados.")
+    elif profiles:
+        print("\n(Datos simulados: los perfiles NO se guardan. Usa --live para el estudio real.)")
 
 
 def print_backtest(result: BacktestResult, league_key: str, simulated: bool) -> None:
@@ -322,6 +355,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--report", default=None, help="Exportar el análisis a un archivo .md o .html")
     p.add_argument("--risk", action="store_true", help="Añadir simulación Monte Carlo de riesgo del bankroll")
     p.add_argument("--risk-rounds", type=int, default=38, help="Jornadas a simular en --risk")
+    p.add_argument("--study", action="store_true",
+                   help="Estudio por liga y mercado (backtest multi-temporada) y perfiles recomendados")
+    p.add_argument("--study-seasons", type=int, default=3, help="Temporadas anteriores incluidas en --study")
     p.add_argument("--tune", action="store_true", help="Ajustar hiperparámetros con validación cronológica")
     p.add_argument("--backtest", action="store_true", help="Ejecutar un backtest walk-forward en vez del análisis")
     p.add_argument("--parlays", action="store_true", help="Backtest: incluir también los parlays")
@@ -344,6 +380,9 @@ def main(argv: list[str] | None = None) -> int:
         league = get_league(args.league)
         if args.tune:
             run_tuning(args)
+            return 0
+        if args.study:
+            run_league_study(args)
             return 0
         if args.backtest:
             print_backtest(run_backtest(args), league.key, simulated=not args.live)

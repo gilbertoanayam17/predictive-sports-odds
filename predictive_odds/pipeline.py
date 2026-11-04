@@ -19,6 +19,7 @@ from .config import get_league
 from .data_fetcher import DataFetcher, DataFetchError
 from .domain import STATUS_FINISHED, MatchPrediction, Selection
 from .injuries import InjuryAdjuster, InjuryImpactConfig
+from .league_study import allowed_markets_for
 from .model_store import BundleMetadata, ModelBundle, ModelStoreError, load_bundle, save_bundle
 from .parlay_builder import (
     Parlay,
@@ -69,6 +70,8 @@ class PipelineConfig:
         extra_leagues: Ligas domésticas adicionales para el modelo de Poisson
             multiliga (útil en competiciones internacionales como la UCL).
         max_match_exposure: Exposición máxima de las sencillas de un mismo partido (``None`` = sin tope).
+        profile_path: Perfiles por liga del estudio (``league_study``); si existe uno
+            para la liga, solo se sugieren sus mercados recomendados. ``None`` = ignorar.
         max_singles: Máximo de sencillas sugeridas (las de mayor EV ajustado); ``None`` = sin límite.
         use_injuries: Si se ajustan las λ por lesiones/bajas reportadas.
         injury: Parámetros de la heurística de lesiones.
@@ -93,6 +96,7 @@ class PipelineConfig:
     extra_leagues: tuple[str, ...] = ()
     max_singles: int | None = None
     max_match_exposure: float | None = None
+    profile_path: str | None = "league_profiles.json"
     injury: InjuryImpactConfig = field(default_factory=InjuryImpactConfig)
 
 
@@ -114,6 +118,7 @@ class AnalysisResult:
         team_ratings: Ratings del modelo de Poisson.
         adjustments: Ajustes por lesiones aplicados (equipo → ajuste).
         odds: Momios usados (enlazados a los partidos), p. ej. para guardar snapshots.
+        profile_markets: Mercados permitidos por el perfil de la liga (``None`` = sin perfil).
         unknown_teams: Equipos de los próximos partidos sin historial (recién
             ascendidos o temporada mal elegida): el modelo les asigna fuerza promedio.
     """
@@ -132,6 +137,7 @@ class AnalysisResult:
     adjustments: dict[str, TeamAdjustment] = field(default_factory=dict)
     odds: pd.DataFrame = field(default_factory=pd.DataFrame)
     unknown_teams: list[str] = field(default_factory=list)
+    profile_markets: tuple[str, ...] | None = None
 
     def predictions_frame(self) -> pd.DataFrame:
         """Tabla de predicciones por partido."""
@@ -369,7 +375,12 @@ class AnalysisPipeline:
         analyzer = HeuristicAnalyzer(history)
         reports = {mid: analyzer.match_report(p.home_team, p.away_team) for mid, p in predictions.items()}
 
-        finder = ValueBetFinder(c.value)
+        value_cfg = c.value
+        profile_markets = allowed_markets_for(c.league_key, c.profile_path) if c.profile_path else None
+        if profile_markets is not None and c.value.allowed_markets is None:
+            value_cfg = replace(c.value, allowed_markets=profile_markets)
+            logger.info("Perfil de %s: mercados permitidos %s", c.league_key, profile_markets or "ninguno")
+        finder = ValueBetFinder(value_cfg)
         all_picks = finder.evaluate(predictions, odds)
         value_bets = sorted([p for p in all_picks if finder.is_value(p)], key=lambda p: p.adjusted_edge, reverse=True)
         value_bets = value_bets[:c.max_singles] if c.max_singles is not None else value_bets
@@ -385,6 +396,7 @@ class AnalysisPipeline:
             team_ratings=ratings[ratings["team"].isin(set(known))].reset_index(drop=True), adjustments=adjustments,
             odds=odds,
             unknown_teams=sorted(set(fixtures["home_team"]).union(fixtures["away_team"]) - set(known)),
+            profile_markets=value_cfg.allowed_markets,
         )
 
 

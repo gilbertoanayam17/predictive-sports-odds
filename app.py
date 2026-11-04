@@ -34,6 +34,7 @@ from predictive_odds.data_fetcher import (
 )
 from predictive_odds.parlay_builder import ParlayConfig, ValueBetConfig
 from predictive_odds.pipeline import AnalysisPipeline, AnalysisResult, PipelineConfig, SlateResult, analyze_slate
+from predictive_odds.league_study import LeagueProfile, StudyConfig, run_study, save_profiles, study_frame
 from predictive_odds.report import render_html, render_markdown
 from predictive_odds.risk import RiskConfig, risk_table
 from predictive_odds.settings import load_env
@@ -192,6 +193,46 @@ def backtest_panel(source: str, seed: int, league_key: str, season: int, bankrol
             show_backtest(bt)
 
 
+@st.cache_data(show_spinner="Estudiando cada liga (puede tardar 1-2 minutos)…", ttl=3600)
+def run_study_cached(source: str, seed: int, season: int, leagues: tuple[str, ...],
+                     seasons_back: int) -> tuple[dict[str, LeagueProfile], dict[str, str]]:
+    """Estudio por liga memoizado (datos reales de football-data o simulados)."""
+    provider: SimulatedDataProvider | FootballDataCoUkProvider
+    if source == "Real":
+        provider = FootballDataCoUkProvider()
+    else:
+        provider = SimulatedDataProvider(SimulationConfig(seed=seed, seasons=tuple(range(season - seasons_back,
+                                                                                         season + 1))))
+    return run_study(provider, leagues, StudyConfig(seasons_back=seasons_back), season)
+
+
+def study_panel(source: str, seed: int, season: int) -> None:
+    """Estudio por liga y mercado: tabla de resultados y guardado del perfil."""
+    st.subheader("Estudio por liga y mercado")
+    st.caption("Backtest de varias temporadas por liga: indica en qué mercados el modelo tiene ventaja real "
+               "(CLV positivo) y guarda un perfil para que la app solo sugiera esos mercados.")
+    leagues = st.multiselect("Ligas a estudiar", selectable_leagues(), default=selectable_leagues(),
+                             format_func=lambda k: LEAGUES[k].name, key="study_leagues")
+    seasons_back = st.slider("Temporadas anteriores", 1, 5, 3, key="study_seasons")
+    if leagues and st.button("Ejecutar estudio", key="study_run"):
+        try:
+            profiles, errors = run_study_cached(source, seed, season, tuple(leagues), seasons_back)
+        except DataFetchError as exc:
+            st.error(str(exc))
+            return
+        for key, err in errors.items():
+            st.warning(f"{LEAGUES[key].name} omitida: {err}")
+        frame = study_frame(profiles)
+        st.dataframe(pct(frame, ["roi", "clv", "clv_positivo"]), hide_index=True, use_container_width=True)
+        for key, prof in profiles.items():
+            st.write(f"**{LEAGUES[key].name}**: {', '.join(prof.markets) if prof.markets else 'ningún mercado'}")
+        if source == "Real" and profiles:
+            path = save_profiles(profiles)
+            st.success(f"Perfiles guardados en `{path.resolve()}`. Se aplican automáticamente en los análisis.")
+        elif profiles:
+            st.info("Datos simulados: los perfiles no se guardan. Cambia a *Real* para el estudio de verdad.")
+
+
 def pct(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     """Formatea columnas de probabilidad como porcentaje para mostrar."""
     out = df.copy()
@@ -288,6 +329,10 @@ def main() -> None:
         st.error(f"No se pudieron obtener datos suficientes: {exc}")
         st.stop()
 
+    if result.profile_markets is not None:
+        allowed = ", ".join(result.profile_markets) or "ninguno"
+        st.info(f"Perfil de **{LEAGUES[league_key].name}** aplicado (estudio por liga): solo se sugieren "
+                f"apuestas en **{allowed}**. Puedes rehacer el estudio en la pestaña *Backtest*.")
     if result.unknown_teams:
         st.warning(f"Sin historial: **{', '.join(result.unknown_teams)}**. El modelo les asigna fuerza promedio, "
                    "así que sus predicciones son poco fiables. Si acaban de ascender, es normal al inicio de la "
@@ -368,6 +413,8 @@ def main() -> None:
 
     with tabs[4]:
         backtest_panel(source, seed, league_key, season, bankroll, use_ml, value_weight, "tab")
+        st.divider()
+        study_panel(source, seed, season)
 
     with tabs[5]:
         try:

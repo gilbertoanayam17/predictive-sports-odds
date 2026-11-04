@@ -244,6 +244,8 @@ class ValueBetConfig:
             se supera suele indicar información que el modelo no tiene
             (lesiones, rotaciones) y el pick se descarta.
         devig_method: Método para quitar el margen.
+        allowed_markets: Mercados permitidos (``"1X2"``, ``"OU"``, ``"AH"``...); ``None`` = todos.
+            Lo fija el estudio por liga (:mod:`predictive_odds.league_study`).
         value_model_weight: Peso del modelo en la probabilidad usada para
             DECIDIR si hay valor (``w·p_modelo + (1−w)·p_mercado``). Con 1.0 se usa
             el modelo puro; valores < 1 corrigen la "maldición del ganador"
@@ -260,6 +262,7 @@ class ValueBetConfig:
     max_market_gap: float = 0.15
     devig_method: Literal["multiplicative", "power"] = "power"
     value_model_weight: float = 0.5
+    allowed_markets: tuple[str, ...] | None = None
     kelly: KellyConfig = field(default_factory=KellyConfig)
 
 
@@ -379,6 +382,11 @@ class ValueBetFinder:
                 combos[k] = None
         df["_sel"] = pd.Series([combos[k] for k in keys], index=df.index, dtype=object)
         df = df[df["_sel"].notna()]
+        if self.config.allowed_markets is not None:  # perfil por liga: solo mercados con ventaja medida
+            allowed = set(self.config.allowed_markets)
+            df = df[[sel.market.value in allowed for sel in df["_sel"]]]
+            if df.empty:
+                return []
         best = df.loc[df.groupby(["match_id", "_sel"], sort=False)["odds"].idxmax()]
         picks: list[Pick] = []
         for mid, league, kickoff, bookmaker, price, sel in zip(

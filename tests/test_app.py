@@ -71,3 +71,14 @@ def test_app_connection_button_without_network(monkeypatch: pytest.MonkeyPatch) 
     at.radio[0].set_value("Real").run()
     next(b for b in at.button if b.label == "Probar conexión").click().run()
     assert not at.exception, at.exception
+
+
+def test_app_league_study_panel() -> None:
+    at = AppTest.from_file(APP, default_timeout=240)
+    at.run()
+    ms = next(m for m in at.multiselect if m.label == "Ligas a estudiar")
+    ms.set_value(["EPL"]).run()
+    next(s for s in at.slider if s.label == "Temporadas anteriores").set_value(1).run()
+    next(b for b in at.button if b.label == "Ejecutar estudio").click().run()
+    assert not at.exception, at.exception
+    assert any("no se guardan" in i.value for i in at.info)  # simulado: no guarda perfiles

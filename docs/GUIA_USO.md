@@ -107,6 +107,16 @@ python main.py --live --league EPL --tune        # hiperparámetros con validaci
 2. Si `--tune` mejora de forma consistente el log-loss (> 0.5%) en varias temporadas, se pueden cambiar los valores por defecto en `PoissonModelConfig` o en el peso del ML.
 3. La calibración (`calibration_report`) solo debe activarse si mejora el Brier fuera de muestra.
 
+## 5b. Estudio por liga y mercado (recomendado antes de apostar)
+
+En la app (*Fuente → Real*, pestaña **Backtest → Estudio por liga y mercado**) o con `python main.py --live --study`:
+- Ejecuta un backtest de varias temporadas en cada liga y muestra, por mercado (1X2, Over/Under, BTTS, DNB, hándicap asiático), el número de apuestas, el ROI y el **CLV**.
+- Recomienda un mercado solo si su **CLV medio es positivo** con suficientes apuestas. El ROI de unos cientos de apuestas es casi ruido; el CLV no.
+- Guarda el resultado en `league_profiles.json`, y a partir de ahí **la app solo sugiere apuestas en los mercados recomendados** de cada liga (lo indica con un aviso azul). Si una liga no tiene ningún mercado recomendado, no se sugiere nada en ella.
+- **Liga MX:** football-data.co.uk solo publica sus momios de cierre, así que el CLV no es comparable; se usa el ROI con el doble de muestra mínima. Tómalo con más cautela.
+
+Repite el estudio cada pocos meses. Para volver a ver todos los mercados, borra `league_profiles.json`.
+
 ## 6. Registro de apuestas
 
 **Desde la app** (pestaña *Registro*):
