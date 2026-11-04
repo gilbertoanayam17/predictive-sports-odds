@@ -19,7 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ui = ["streamlit>=1.40"]
-dev = ["pytest>=7.4", "mypy>=1.8", "pandas-stubs>=2.1", "types-requests>=2.31"]
+dev = ["pytest>=7.4", "pytest-cov>=4.1", "mypy>=1.8", "pandas-stubs>=2.1", "types-requests>=2.31"]
 
 [project.scripts]
 predictive-odds = "predictive_odds.cli:main"

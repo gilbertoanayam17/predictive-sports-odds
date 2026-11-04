@@ -654,7 +654,12 @@ class FootballDataCoUkProvider(ResultsProvider):
                 (como casa ``CLOSING_BOOKMAKER``) para medir el CLV.
 
         Returns:
-            DataFrame con ``ODDS_COLUMNS`` (1X2 y Over/Under 2.5).
+            DataFrame con ``ODDS_COLUMNS`` (1X2, Over/Under 2.5 y hándicap asiático).
+
+        Note:
+            En el formato "extra" (Liga MX) football-data solo publica momios de
+            cierre; entonces se usan como precio de apuesta, lo que hace el
+            backtest conservador (el CLV frente a Pinnacle queda cerca de 0).
         """
         raw = self._download(league, season)
         rows: list[dict[str, Any]] = []
@@ -663,10 +668,14 @@ class FootballDataCoUkProvider(ResultsProvider):
             base = {"match_id": mid, "league": league.key, "home_team": r["HomeTeam"],
                     "away_team": r["AwayTeam"], "commence_time": r["date_parsed"]}
             for prefix, book in self.BOOKMAKER_PREFIXES.items():
+                # El formato "extra" (p. ej. Liga MX) solo trae momios de CIERRE (B365CH, AvgCH...):
+                # si no hay precio pre-partido se usa el de cierre de esa casa (backtest conservador).
+                pre = f"{prefix}H" in raw.columns
+                tag = "" if pre else "C"
                 for col, market, sel, line in (
-                    (f"{prefix}H", "1X2", "HOME", None), (f"{prefix}D", "1X2", "DRAW", None),
-                    (f"{prefix}A", "1X2", "AWAY", None), (f"{prefix}>2.5", "OU", "OVER", 2.5),
-                    (f"{prefix}<2.5", "OU", "UNDER", 2.5),
+                    (f"{prefix}{tag}H", "1X2", "HOME", None), (f"{prefix}{tag}D", "1X2", "DRAW", None),
+                    (f"{prefix}{tag}A", "1X2", "AWAY", None), (f"{prefix}{tag}>2.5", "OU", "OVER", 2.5),
+                    (f"{prefix}{tag}<2.5", "OU", "UNDER", 2.5),
                 ):
                     if col in raw.columns and pd.notna(r[col]):
                         rows.append({**base, "bookmaker": book, "market": market,
