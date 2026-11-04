@@ -171,6 +171,9 @@ class Pick:
         market_prob: Probabilidad justa de consenso (sin margen), si se conoce.
         stake_fraction: Stake sugerido como fracción del bankroll.
         decision_prob: Probabilidad usada para decidir el valor (modelo + mercado).
+        action_share: Fracción del stake en juego (1 − prob. de push); 1 en
+            mercados binarios. En DNB/hándicap asiático, ``model_prob`` es la
+            probabilidad efectiva ``W/(W+L)`` y el EV es ``s·(p·momio − 1)``.
     """
 
     match_id: str
@@ -185,12 +188,13 @@ class Pick:
     market_prob: float | None = None
     stake_fraction: float = 0.0
     decision_prob: float | None = None
+    action_share: float = 1.0
 
     @property
     def adjusted_edge(self) -> float:
-        """EV con la probabilidad de decisión (modelo encogido hacia el mercado)."""
+        """EV por unidad con la probabilidad de decisión (modelo encogido hacia el mercado)."""
         p = self.decision_prob if self.decision_prob is not None else self.model_prob
-        return expected_value(p, self.odds)
+        return self.action_share * expected_value(p, self.odds)
 
     @property
     def implied_prob(self) -> float:
@@ -199,8 +203,8 @@ class Pick:
 
     @property
     def edge(self) -> float:
-        """Valor esperado por unidad (``p·momio − 1``)."""
-        return expected_value(self.model_prob, self.odds)
+        """Valor esperado por unidad (``s·(p·momio − 1)``; ``s = 1`` en mercados binarios)."""
+        return self.action_share * expected_value(self.model_prob, self.odds)
 
     @property
     def fixture(self) -> str:
@@ -292,7 +296,11 @@ class ValueBetFinder:
         acc: dict[tuple[str, Selection], list[float]] = {}
         if odds.empty:
             return {}
-        df = odds.assign(_line=odds["line"].fillna(-1.0))
+        # En el hándicap asiático las dos caras tienen líneas opuestas (local −0.5 / visitante +0.5):
+        # se agrupan por la línea vista desde el local.
+        is_away_ah = (odds["market"] == Market.ASIAN_HANDICAP.value) & (odds["selection"] == "AWAY")
+        line = pd.to_numeric(odds["line"], errors="coerce")
+        df = odds.assign(_line=line.where(~is_away_ah, -line).fillna(-1.0))
         for (mid, _book, market, _line), grp in df.groupby(["match_id", "bookmaker", "market", "_line"]):
             size = MARKET_SIZE.get(Market(market))
             grp = grp.drop_duplicates("selection")
@@ -337,9 +345,12 @@ class ValueBetFinder:
             p_market = consensus.get((str(row["match_id"]), sel))
             pick = Pick(str(row["match_id"]), str(row["league"]), pred.home_team, pred.away_team,
                         pred.kickoff if pred.kickoff is not None else row["commence_time"], sel,
-                        float(row["odds"]), str(row["bookmaker"]), p_model, p_market)
+                        float(row["odds"]), str(row["bookmaker"]), p_model, p_market,
+                        action_share=pred.action_share(sel))
             pick = replace(pick, decision_prob=self.decision_probability(pick))
-            stake = modified_kelly(p_model, pick.odds, p_market, self.config.kelly) if self.is_value(pick) else 0.0
+            # Kelly con push: f* = s · f*_binario(p_eff) (exacto para ganar/push/perder)
+            stake = (modified_kelly(p_model, pick.odds, p_market, self.config.kelly) * pick.action_share
+                     if self.is_value(pick) else 0.0)
             picks.append(replace(pick, stake_fraction=stake))
         return picks
 
@@ -361,7 +372,7 @@ class ValueBetFinder:
         """Indica si un pick cumple los criterios de valor configurados."""
         c = self.config
         p = self.decision_probability(pick)
-        if p <= pick.implied_prob or p * pick.odds - 1 < c.min_edge:
+        if p <= pick.implied_prob or pick.action_share * (p * pick.odds - 1) < c.min_edge:
             return False
         if not c.min_odds <= pick.odds <= c.max_odds or pick.model_prob < c.min_model_prob:
             return False
@@ -570,6 +581,8 @@ class ParlayBuilder:
         c = self.config
         best: dict[tuple[str, Selection], Pick] = {}
         for p in picks:
+            if p.selection.is_graded:  # DNB/hándicap asiático: el push en parlays varía por casa
+                continue
             if p.model_prob < c.min_leg_prob or p.edge < c.min_leg_edge or p.odds < c.min_leg_odds:
                 continue
             key = (p.match_id, p.selection)

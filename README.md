@@ -50,7 +50,7 @@ predictive_odds/
 main.py                    # Demo de punta a punta en la terminal (envoltorio del CLI)
 ```
 
-**Idea central:** cada `Selection` (1X2, doble oportunidad, Over/Under x.5, BTTS, marcador exacto) se representa como una máscara booleana sobre la matriz de marcadores `P(local=i, visitante=j)`. De ahí sale todo:
+**Idea central:** cada `Selection` (1X2, doble oportunidad, Over/Under x.5, BTTS, marcador exacto, Draw No Bet, hándicap asiático) se representa como una máscara booleana sobre la matriz de marcadores `P(local=i, visitante=j)`. De ahí sale todo:
 - la probabilidad de cualquier mercado, a partir de una sola matriz de Poisson;
 - la probabilidad conjunta **exacta** de varias patas del mismo partido (correlación);
 - la detección de contradicciones (sin ningún marcador en común; p. ej. *Menos de 1.5 + Ambos marcan*) y de redundancias (*Más de 2.5* ya implica *Más de 1.5*).
@@ -88,6 +88,9 @@ En competiciones internacionales, Poisson se entrena junto con las ligas domést
 
 ### Lesiones (`injuries.py`)
 Las bajas (API-Football o simuladas) se traducen en multiplicadores de ataque y defensa que modifican las λ de Poisson. Como el ML no conoce ese contexto, sus probabilidades se corrigen en la misma proporción. Medido en la simulación (20 jornadas con bajas que las casas sí descuentan), el EV real de los value bets sube de 6.3% a 6.5%, y de 5.7% a 6.1% en los partidos con bajas. La mejora es moderada porque el encogimiento hacia el mercado ya absorbía parte del efecto. Activado por defecto (`use_injuries=True`).
+
+### Draw No Bet y hándicap asiático
+Son mercados con *push* y, en líneas de cuarto, con medio acierto o media pérdida (−0.25 = mitad a 0 y mitad a −0.5). Cada selección tiene una rejilla de resultados por marcador (+1, +½, 0, −½, −1). Para el valor y el stake se usa `p_eff = W/(W+L)` con la fracción en juego `s = W+L`: el EV `s·(p_eff·momio − 1)` es exacto y Kelly también lo es con push. La liquidación (backtest y registro) paga las medias, y el push se devuelve como `void`. Las dos caras del hándicap (local −0.5 / visitante +0.5) se emparejan al quitar el margen. Fuentes: `spreads` de The Odds API, las columnas `AHh`/`*AHH`/`*AHA` de football-data.co.uk (y el cierre `PCAH*`) y la simulación. **No entran en parlays**, porque cada casa trata el push de forma distinta. En el backtest simulado, el hándicap asiático es el mercado con más oportunidades: ROI +11% y CLV +6%.
 
 ### Riesgo Monte Carlo (`risk.py`, `--risk`)
 Repite la jornada analizada N veces y cruza la fracción de Kelly con supuestos sobre el edge real: el modelo acierta, el edge real es la mitad, el modelo no aporta o el modelo se equivoca en contra. Resultado típico en la simulación (38 jornadas): con **¼ de Kelly y el 10% de exposición** (valores por defecto), la probabilidad de ruina es del 0% incluso en el peor escenario, y la de un drawdown mayor al 30%, del ≈5%. Con Kelly completo, en el peor escenario la probabilidad de ruina sube al ≈36%. Esto respalda los valores por defecto.

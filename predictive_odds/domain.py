@@ -48,6 +48,8 @@ class Market(str, Enum):
     OVER_UNDER = "OU"
     BTTS = "BTTS"
     CORRECT_SCORE = "CS"
+    DRAW_NO_BET = "DNB"
+    ASIAN_HANDICAP = "AH"
 
 
 class Outcome(str, Enum):
@@ -74,6 +76,8 @@ VALID_OUTCOMES: dict[Market, frozenset[Outcome]] = {
     Market.OVER_UNDER: frozenset({Outcome.OVER, Outcome.UNDER}),
     Market.BTTS: frozenset({Outcome.YES, Outcome.NO}),
     Market.CORRECT_SCORE: frozenset({Outcome.SCORE}),
+    Market.DRAW_NO_BET: frozenset({Outcome.HOME, Outcome.AWAY}),
+    Market.ASIAN_HANDICAP: frozenset({Outcome.HOME, Outcome.AWAY}),
 }
 
 #: Número de resultados que forman un mercado completo (para quitar el margen).
@@ -81,6 +85,8 @@ MARKET_SIZE: dict[Market, int] = {
     Market.MATCH_RESULT: 3,
     Market.OVER_UNDER: 2,
     Market.BTTS: 2,
+    Market.DRAW_NO_BET: 2,
+    Market.ASIAN_HANDICAP: 2,
 }
 
 
@@ -112,13 +118,21 @@ class Selection:
         if self.market is Market.OVER_UNDER:
             if self.line is None or self.line < 0 or abs((self.line * 2) % 2 - 1) > 1e-9:
                 raise ValueError(f"Línea Over/Under inválida: {self.line} (solo se admiten x.5)")
+        elif self.market is Market.ASIAN_HANDICAP:
+            if self.line is None or abs(self.line * 4 - round(self.line * 4)) > 1e-9 or abs(self.line) > 10:
+                raise ValueError(f"Hándicap asiático inválido: {self.line} (múltiplos de 0.25)")
         elif self.line is not None:
-            raise ValueError("Solo el mercado Over/Under admite línea")
+            raise ValueError("Solo Over/Under y hándicap asiático admiten línea")
         if self.market is Market.CORRECT_SCORE:
             if self.score is None or min(self.score) < 0:
                 raise ValueError("El mercado de marcador exacto requiere un marcador válido")
         elif self.score is not None:
             raise ValueError("Solo el mercado de marcador exacto admite 'score'")
+
+    @property
+    def is_graded(self) -> bool:
+        """``True`` si la selección puede tener push o medio resultado (DNB, hándicap asiático)."""
+        return self.market in (Market.DRAW_NO_BET, Market.ASIAN_HANDICAP)
 
     # ------------------------------------------------------------------ factories
     @classmethod
@@ -157,6 +171,21 @@ class Selection:
         return cls(Market.CORRECT_SCORE, Outcome.SCORE, score=(home_goals, away_goals))
 
     @classmethod
+    def draw_no_bet(cls, home: bool = True) -> Selection:
+        """Crea la selección 'Empate no apuesta' (DNB) para el local o el visitante."""
+        return cls(Market.DRAW_NO_BET, Outcome.HOME if home else Outcome.AWAY)
+
+    @classmethod
+    def asian_handicap(cls, home: bool, line: float) -> Selection:
+        """Crea una selección de hándicap asiático.
+
+        Args:
+            home: ``True`` para el local.
+            line: Hándicap aplicado AL EQUIPO ELEGIDO (p. ej. -0.75, +0.25).
+        """
+        return cls(Market.ASIAN_HANDICAP, Outcome.HOME if home else Outcome.AWAY, line=float(line))
+
+    @classmethod
     def from_codes(cls, market: str, outcome: str, line: float | None = None) -> Selection:
         """Construye una selección a partir de códigos de texto (p. ej. de un CSV/API).
 
@@ -173,7 +202,8 @@ class Selection:
         """
         mkt = Market(market)
         clean_line = None if line is None or (isinstance(line, float) and np.isnan(line)) else float(line)
-        return cls(mkt, Outcome(outcome), line=clean_line if mkt is Market.OVER_UNDER else None)
+        has_line = mkt in (Market.OVER_UNDER, Market.ASIAN_HANDICAP)
+        return cls(mkt, Outcome(outcome), line=clean_line if has_line else None)
 
     # --------------------------------------------------------------- presentation
     @property
@@ -189,6 +219,10 @@ class Selection:
             Outcome.YES: "Ambos marcan: Sí",
             Outcome.NO: "Ambos marcan: No",
         }
+        if self.market is Market.DRAW_NO_BET:
+            return f"DNB {'Local' if self.outcome is Outcome.HOME else 'Visitante'}"
+        if self.market is Market.ASIAN_HANDICAP:
+            return f"AH {'Local' if self.outcome is Outcome.HOME else 'Visitante'} {self.line:+g}"
         if self.outcome is Outcome.OVER:
             return f"Más de {self.line}"
         if self.outcome is Outcome.UNDER:
@@ -207,6 +241,17 @@ class Selection:
             Matriz booleana de tamaño ``(max_goals+1, max_goals+1)`` (solo lectura).
         """
         return _selection_mask(self, max_goals)
+
+    def result_grid(self, max_goals: int) -> FloatMatrix:
+        """Resultado por marcador: +1 gana, +0.5 medio gana, 0 push, −0.5 medio pierde, −1 pierde.
+
+        Args:
+            max_goals: Goles máximos por equipo.
+
+        Returns:
+            Matriz ``(max_goals+1)²`` de solo lectura.
+        """
+        return _result_grid(self, max_goals)
 
     def __str__(self) -> str:  # pragma: no cover - cosmético
         """Representación legible."""
@@ -228,7 +273,9 @@ def _selection_mask(selection: Selection, max_goals: int) -> BoolMatrix:
     a = np.arange(max_goals + 1)[None, :]
     total = h + a
     o = selection.outcome
-    if o is Outcome.HOME:
+    if selection.is_graded:
+        m = _result_grid(selection, max_goals) > 0  # gana o medio gana
+    elif o is Outcome.HOME:
         m = h > a
     elif o is Outcome.DRAW:
         m = h == a
@@ -255,6 +302,55 @@ def _selection_mask(selection: Selection, max_goals: int) -> BoolMatrix:
     result = np.broadcast_to(m, (max_goals + 1, max_goals + 1)).copy()
     result.setflags(write=False)
     return result
+
+
+def _single_line_result(margin: npt.NDArray[np.int_], line: float) -> FloatMatrix:
+    """Resultado de un hándicap entero o .5 (+1 / 0 / −1) dado el margen del equipo elegido."""
+    adj = margin + line
+    return np.sign(adj).astype(float)
+
+
+@lru_cache(maxsize=512)
+def _result_grid(selection: Selection, max_goals: int) -> FloatMatrix:
+    """Calcula (y memoiza) la rejilla de resultados graduados de una selección.
+
+    Las líneas de cuarto (x.25 / x.75) se liquidan como dos medias apuestas en
+    las líneas adyacentes (p. ej. −0.25 = mitad a 0 y mitad a −0.5).
+    """
+    h = np.arange(max_goals + 1)[:, None]
+    a = np.arange(max_goals + 1)[None, :]
+    if selection.is_graded:
+        margin = (h - a) if selection.outcome is Outcome.HOME else (a - h)
+        line = 0.0 if selection.market is Market.DRAW_NO_BET else float(selection.line or 0.0)
+        frac = abs(line * 4) % 2  # 1 => línea de cuarto
+        if abs(frac - 1) < 1e-9:
+            grid = 0.5 * (_single_line_result(margin, line - 0.25) + _single_line_result(margin, line + 0.25))
+        else:
+            grid = _single_line_result(margin, line)
+    else:
+        grid = np.where(_selection_mask(selection, max_goals), 1.0, -1.0)
+    out = np.broadcast_to(grid, (max_goals + 1, max_goals + 1)).astype(float).copy()
+    out.setflags(write=False)
+    return out
+
+
+def graded_components(selection: Selection, score_matrix: FloatMatrix) -> tuple[float, float]:
+    """``(W, L)``: probabilidad ponderada de ganar y de perder (las medias cuentan 0.5).
+
+    Con ``p_eff = W/(W+L)`` y ``s = W+L`` el EV de cualquier selección es
+    ``s·(p_eff·momio − 1)`` (exacto incluso con push y medios resultados).
+
+    Args:
+        selection: Selección.
+        score_matrix: Matriz de probabilidades de marcador.
+
+    Returns:
+        ``(W, L)``.
+    """
+    grid = selection.result_grid(score_matrix.shape[0] - 1)
+    w = float(score_matrix[grid > 0].dot(np.abs(grid[grid > 0])))
+    loss = float(score_matrix[grid < 0].dot(np.abs(grid[grid < 0])))
+    return w, loss
 
 
 def selections_compatible(selections: Sequence[Selection], max_goals: int = 10) -> bool:
@@ -320,9 +416,27 @@ class MatchPrediction:
             selection: Selección a evaluar.
 
         Returns:
-            Probabilidad en [0, 1].
+            Probabilidad en [0, 1]. Para DNB/hándicap asiático es la probabilidad
+            efectiva ``W/(W+L)`` (condicionada a que la apuesta no sea push).
         """
+        if selection.is_graded:
+            w, loss = graded_components(selection, self.score_matrix)
+            return w / (w + loss) if w + loss > 0 else 0.0
         return float(self.score_matrix[selection.mask(self.max_goals)].sum())
+
+    def action_share(self, selection: Selection) -> float:
+        """Fracción del stake "en juego" (1 − prob. de devolución); 1 en mercados binarios.
+
+        Args:
+            selection: Selección.
+
+        Returns:
+            ``W + L`` en [0, 1].
+        """
+        if not selection.is_graded:
+            return 1.0
+        w, loss = graded_components(selection, self.score_matrix)
+        return w + loss
 
     def probability(self, selection: Selection) -> float:
         """Probabilidad final (ensamble si existe, si no la matriz).

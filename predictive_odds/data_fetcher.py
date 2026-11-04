@@ -47,6 +47,7 @@ from .domain import (
     STATUS_SCHEDULED,
     Market,
     Selection,
+    graded_components,
 )
 
 logger = logging.getLogger(__name__)
@@ -670,6 +671,19 @@ class FootballDataCoUkProvider(ResultsProvider):
                     if col in raw.columns and pd.notna(r[col]):
                         rows.append({**base, "bookmaker": book, "market": market,
                                      "selection": sel, "line": line, "odds": r[col]})
+            ah = r.get("AHh")
+            if ah is not None and pd.notna(ah):
+                for prefix, book in self.BOOKMAKER_PREFIXES.items():
+                    for col, sel, ln in ((f"{prefix}AHH", "HOME", float(ah)), (f"{prefix}AHA", "AWAY", -float(ah))):
+                        if col in raw.columns and pd.notna(r[col]):
+                            rows.append({**base, "bookmaker": book, "market": "AH", "selection": sel,
+                                         "line": ln, "odds": r[col]})
+            ahc = r.get("AHCh")
+            if include_closing and ahc is not None and pd.notna(ahc):
+                for col, sel, ln in (("PCAHH", "HOME", float(ahc)), ("PCAHA", "AWAY", -float(ahc))):
+                    if col in raw.columns and pd.notna(r[col]):
+                        rows.append({**base, "bookmaker": CLOSING_BOOKMAKER, "market": "AH", "selection": sel,
+                                     "line": ln, "odds": r[col]})
             if include_closing:
                 for col, market, sel, line in self.CLOSING_COLUMNS:
                     if col in raw.columns and pd.notna(r[col]):
@@ -931,6 +945,9 @@ class TheOddsApiProvider(OddsProvider):
                             elif mkt.get("key") == "totals":
                                 market, line = "OU", outcome.get("point")
                                 selection = {"Over": "OVER", "Under": "UNDER"}.get(name)
+                            elif mkt.get("key") == "spreads":  # hándicap asiático
+                                market, line = "AH", outcome.get("point")
+                                selection = {home: "HOME", away: "AWAY"}.get(name)
                             elif mkt.get("key") == "btts":
                                 market = "BTTS"
                                 selection = {"Yes": "YES", "No": "NO"}.get(name)
@@ -998,6 +1015,7 @@ class SimulationConfig:
         injury_defense_effect: Aumento real de goles recibidos por baja.
         injury_doubtful_prob: Fracción de bajas reportadas como duda (juegan el 50%).
         ou_lines: Líneas de Over/Under cotizadas.
+        ah_lines: Líneas de hándicap asiático cotizadas (vistas desde el local).
     """
 
     seed: int = 42
@@ -1014,6 +1032,7 @@ class SimulationConfig:
     bookmaker_noise: float = 0.07
     closing_noise: float = 0.03
     closing_margin: float = 0.025
+    ah_lines: tuple[float, ...] = (-1.0, -0.75, -0.25, 0.25)
     league_offsets: dict[str, float] = field(default_factory=lambda: {"EPL": 0.20, "LIGA_MX": -0.20, "OTHER": 0.15})
     injury_rate: float = 0.35
     injury_max_players: int = 3
@@ -1206,9 +1225,12 @@ class SimulatedDataProvider(ResultsProvider, OddsProvider):
         grid = np.arange(11)
         markets: list[tuple[str, str, float | None]] = [
             ("1X2", "HOME", None), ("1X2", "DRAW", None), ("1X2", "AWAY", None),
-            ("BTTS", "YES", None), ("BTTS", "NO", None),
-        ] + [("OU", s, ln) for ln in c.ou_lines for s in ("OVER", "UNDER")]
-        masks = [Selection.from_codes(mk, sel, ln).mask(10) for mk, sel, ln in markets]
+            ("BTTS", "YES", None), ("BTTS", "NO", None), ("DNB", "HOME", None), ("DNB", "AWAY", None),
+        ]
+        markets += [("OU", s, ln) for ln in c.ou_lines for s in ("OVER", "UNDER")]
+        for ln in c.ah_lines:
+            markets += [("AH", "HOME", ln), ("AH", "AWAY", -ln)]
+        sels = [Selection.from_codes(mk, sel, ln) for mk, sel, ln in markets]
         rows: list[dict[str, Any]] = []
         for m in matches.itertuples(index=False):
             lh, la = self.match_lambdas(league, season, self._round_of(season, m.date),
@@ -1219,8 +1241,13 @@ class SimulatedDataProvider(ResultsProvider, OddsProvider):
                 bla = la * np.exp(rng.normal(0, noise))
                 mat = np.outer(poisson.pmf(grid, blh), poisson.pmf(grid, bla))
                 mat /= mat.sum()
-                for (market, sel, line), mask in zip(markets, masks):
-                    p = min(max(float(mat[mask].sum()), 0.01), 0.99)
+                for (market, sel, line), selection in zip(markets, sels):
+                    if selection.is_graded:  # precio sobre la probabilidad efectiva W/(W+L)
+                        w, loss = graded_components(selection, mat)
+                        prob = w / (w + loss) if w + loss > 0 else 0.5
+                    else:
+                        prob = float(mat[selection.mask(10)].sum())
+                    p = min(max(prob, 0.01), 0.99)
                     odds = round(max(1.01, 1.0 / (p * (1 + margin))), 2)
                     rows.append({"match_id": m.match_id, "league": league.key, "home_team": m.home_team,
                                  "away_team": m.away_team, "commence_time": m.date, "bookmaker": book,

@@ -28,7 +28,7 @@ from typing import Iterator, Sequence
 import numpy as np
 import pandas as pd
 
-from .backtester import selection_wins
+from .backtester import selection_result, selection_wins, settlement_pnl
 from .domain import STATUS_FINISHED, Selection
 from .parlay_builder import Parlay, Pick, ValueBetFinder
 
@@ -231,13 +231,17 @@ class BetTracker:
             if not all(l.match_id in scores for l in legs):
                 continue
             try:
-                won = all(selection_wins(parse_selection_code(l.selection), *scores[l.match_id]) for l in legs)
+                if len(legs) == 1:  # sencilla: admite push y medios resultados (DNB/AH)
+                    result = selection_result(parse_selection_code(legs[0].selection), *scores[legs[0].match_id])
+                else:
+                    won_all = all(selection_wins(parse_selection_code(l.selection), *scores[l.match_id]) for l in legs)
+                    result = 1.0 if won_all else -1.0
             except ValueError as exc:
                 logger.error("Apuesta %s con selección inválida, se anula: %s", row["id"], exc)
                 status, pnl = "void", 0.0
             else:
-                status = "won" if won else "lost"
-                pnl = row["stake"] * (row["odds"] - 1) if won else -row["stake"]
+                status = "won" if result > 0 else "lost" if result < 0 else "void"
+                pnl = settlement_pnl(result, row["odds"], row["stake"])
             with self._tx() as conn:
                 conn.execute("UPDATE bets SET status = ?, pnl = ?, settled_at = ? WHERE id = ?",
                              (status, pnl, _now(), row["id"]))

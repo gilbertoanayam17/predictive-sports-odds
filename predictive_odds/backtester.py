@@ -57,8 +57,36 @@ def selection_wins(selection: Selection, home_goals: int, away_goals: int) -> bo
     Returns:
         ``True`` si la selección resulta ganadora.
     """
+    return selection_result(selection, home_goals, away_goals) > 0
+
+
+def selection_result(selection: Selection, home_goals: int, away_goals: int) -> float:
+    """Resultado graduado: +1 gana, +0.5 medio gana, 0 push, −0.5 medio pierde, −1 pierde.
+
+    Args:
+        selection: Selección.
+        home_goals: Goles del local (90').
+        away_goals: Goles del visitante (90').
+
+    Returns:
+        Resultado en {−1, −0.5, 0, 0.5, 1}.
+    """
     size = max(10, int(home_goals), int(away_goals))
-    return bool(selection.mask(size)[int(home_goals), int(away_goals)])
+    return float(selection.result_grid(size)[int(home_goals), int(away_goals)])
+
+
+def settlement_pnl(result: float, odds: float, stake: float) -> float:
+    """Beneficio de una apuesta dado su resultado graduado.
+
+    Args:
+        result: Salida de :func:`selection_result`.
+        odds: Momio decimal.
+        stake: Importe apostado.
+
+    Returns:
+        Beneficio (negativo si pierde; 0 si es push).
+    """
+    return stake * (odds - 1) * result if result > 0 else stake * result
 
 
 @dataclass
@@ -215,6 +243,8 @@ class Backtester:
             picks = finder.evaluate(preds, day_odds)
             scores = {str(m.match_id): (int(m.home_goals), int(m.away_goals)) for m in today.itertuples(index=False)}
             for p in picks:
+                if p.selection.is_graded:  # la calibración binaria no aplica con push
+                    continue
                 evaluated.append({"date": day, "match_id": p.match_id, "market": p.selection.market.value,
                                   "model_prob": p.model_prob, "odds": p.odds,
                                   "won": selection_wins(p.selection, *scores[p.match_id])})
@@ -227,8 +257,9 @@ class Backtester:
                 stake = p.stake_fraction * start_bankroll
                 if stake <= 0:
                     continue
-                won = selection_wins(p.selection, *scores[p.match_id])
-                pnl = stake * (p.odds - 1) if won else -stake
+                outcome = selection_result(p.selection, *scores[p.match_id])
+                won = outcome > 0
+                pnl = settlement_pnl(outcome, p.odds, stake)
                 bankroll += pnl
                 bets.append({"date": day, "match_id": p.match_id, "fixture": p.fixture, "type": "single",
                              "market": p.selection.market.value, "selection": p.selection.label, "odds": p.odds,
@@ -289,4 +320,5 @@ class Backtester:
         return m
 
 
-__all__ = ["BacktestConfig", "BacktestResult", "Backtester", "selection_wins"]
+__all__ = ["BacktestConfig", "BacktestResult", "Backtester", "selection_result", "selection_wins",
+           "settlement_pnl"]
