@@ -33,6 +33,8 @@ predictive_odds/
 ├── statistical_models.py  # Heurísticas, Elo, features sin fuga, Dixon-Coles, ML, ensamble
 ├── parlay_builder.py      # Value bets, conflictos, parlays, Kelly modificado, tope de exposición
 ├── backtester.py          # Backtest walk-forward con CLV contra la línea de cierre
+├── calibration.py         # Calibración isotónica/Platt, ECE y tabla de fiabilidad
+├── model_store.py         # Guardar/cargar modelos entrenados (joblib + metadatos)
 └── pipeline.py            # AnalysisPipeline.run() → AnalysisResult (DataFrames listos para UI)
 main.py                    # Demo de punta a punta en la terminal
 ```
@@ -69,6 +71,10 @@ Manejo de errores: timeouts, reintentos con backoff exponencial, `Retry-After` e
 Walk-forward fecha a fecha: reentrena solo con el pasado, apuesta con los momios pre-partido, liquida con el resultado real y mide ROI, drawdown, acierto, calibración por tramos y **CLV** contra la línea de cierre (Pinnacle en football-data.co.uk; una línea "sharp" en la simulación). La línea de cierre nunca se usa para decidir.
 
 Hallazgo medido (simulación, 4 semillas): con el modelo puro, el EV esperado medio de los picks era ≈18% y el real ≈3.8%. Encoger la probabilidad al 50% hacia el mercado sube el EV real a 5.3% y el CLV de 2.6% a 4.0%; limitar los momios a ≤ 4 empeora. Por eso el valor por defecto es `value_model_weight=0.5`. Los parlays del backtest rinden peor que las sencillas, como era de esperar por la varianza y el error compuesto del modelo.
+
+### Calibración y persistencia
+- `python main.py --model-path models/epl.joblib` reutiliza los modelos guardados mientras no tengan más de 7 días de antigüedad respecto al último partido, y los guarda al reentrenar (escritura atómica, metadatos en `.json`). Solo se deben cargar bundles propios, porque joblib usa pickle.
+- `ProbabilityCalibrator` (isotónico o Platt, por mercado) se ajusta sobre las selecciones evaluadas fuera de muestra en un backtest. **Está desactivado por defecto:** en la validación simulada no mejoró el Brier (0.2054 → 0.2059–0.2070), porque el modelo ya está bien calibrado. Con datos reales hay que medirlo con `calibration_report(backtest.evaluated)`.
 
 ## Conectar una UI (siguiente fase)
 

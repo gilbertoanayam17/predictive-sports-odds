@@ -22,7 +22,7 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | # | Estado | Tarea | Valor | Depende de |
 |---|---|---|---|---|
 | 1 | [x] | **Backtester walk-forward** (`backtester.py`): reentrenar por jornada, apostar con las reglas del motor, medir ROI, yield, drawdown, CLV y la calibración por tramos | Indispensable: sin backtest no se sabe si el sistema gana dinero | — |
-| 2 | [ ] | **Calibración y persistencia de modelos**: diagrama de fiabilidad, calibración isotónica/Platt opcional, guardar y cargar modelos (`joblib`) | Evita reentrenar; probabilidades más fiables | 1 |
+| 2 | [x] | **Calibración y persistencia de modelos**: diagrama de fiabilidad, calibración isotónica/Platt opcional, guardar y cargar modelos (`joblib`) | Evita reentrenar; probabilidades más fiables | 1 |
 | 3 | [ ] | **Ajuste por lesiones**: impacto por jugador ausente sobre λ (heurística por titularidad/posición) e integración con `fetch_injuries` | Mayor fuente de error del modelo | — |
 | 4 | [ ] | **Modelo multiliga para UCL**: coeficiente de fuerza por liga, entrenamiento conjunto con varias ligas | La UCL hoy trata a los equipos como de fuerza promedio | — |
 | 5 | [x] | **CI en GitHub Actions**: pytest + mypy en cada push | Calidad continua | — |
@@ -36,3 +36,4 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 2026-11-04 | Base del sistema (Fases 1-5) | inicial | 26 tests, mypy limpio |
 | 2026-11-04 | #1 Backtester walk-forward | ver git log | ROI/CLV/drawdown/calibración. Hallazgo: EV del modelo sobreestimado (≈18% esperado vs 3.8% real). `value_model_weight=0.5` → EV real 5.3%, CLV 4.0% (4 semillas). Momios históricos simulados con línea de cierre; cierre de Pinnacle en football-data |
 | 2026-11-04 | #5 CI GitHub Actions | ver git log | pytest + mypy + demo en Python 3.10 y 3.12 |
+| 2026-11-04 | #2 Calibración y persistencia | ver git log | `calibration.py` (isotónico/Platt, ECE, fiabilidad) y `model_store.py` (bundle joblib con validación de liga/formato/antigüedad). Calibración medida: no mejora el Brier en la simulación → desactivada por defecto. `--model-path` en main |

@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+from .calibration import ProbabilityCalibrator
 from .data_fetcher import DataFetcher, DataFetchError
 from .domain import STATUS_FINISHED, MatchPrediction, Selection
+from .model_store import BundleMetadata, ModelBundle, ModelStoreError, load_bundle, save_bundle
 from .parlay_builder import (
     Parlay,
     ParlayBuilder,
@@ -54,6 +57,11 @@ class PipelineConfig:
         poisson: Configuración de Poisson.
         value: Configuración de valor.
         parlay: Configuración de parlays.
+        model_path: Si se indica, se reutiliza el bundle guardado mientras no
+            esté desactualizado y se guarda tras cada reentrenamiento.
+        max_model_age_days: Antigüedad máxima del bundle respecto al último partido.
+        calibrator: Calibrador opcional (ajustado, p. ej., sobre un backtest).
+            Desactivado por defecto: en la validación simulada no mejoró el Brier.
     """
 
     league_key: str = "EPL"
@@ -66,6 +74,9 @@ class PipelineConfig:
     poisson: PoissonModelConfig = field(default_factory=PoissonModelConfig)
     value: ValueBetConfig = field(default_factory=ValueBetConfig)
     parlay: ParlayConfig = field(default_factory=ParlayConfig)
+    model_path: str | None = None
+    max_model_age_days: int = 7
+    calibrator: ProbabilityCalibrator | None = None
 
 
 @dataclass
@@ -154,6 +165,35 @@ class AnalysisPipeline:
             except InsufficientDataError as exc:
                 logger.warning("ML desactivado: %s", exc)
         return EnsemblePredictor(poisson_model, ml, fe, self.config.ml_weight), fe, feats
+
+    def get_models(self, history: pd.DataFrame) -> EnsemblePredictor:
+        """Devuelve modelos listos: carga el bundle vigente o reentrena (y guarda).
+
+        Args:
+            history: Partidos finalizados.
+
+        Returns:
+            Ensamble entrenado.
+        """
+        c = self.config
+        latest = history["date"].max()
+        if c.model_path and Path(c.model_path).exists():
+            try:
+                bundle = load_bundle(c.model_path, expected_league=c.league_key)
+                if not bundle.is_stale(latest, c.max_model_age_days):
+                    logger.info("Usando modelos guardados (%s)", c.model_path)
+                    return bundle.ensemble
+                logger.info("Bundle desactualizado; se reentrena")
+            except ModelStoreError as exc:
+                logger.warning("No se pudo usar el bundle guardado: %s; se reentrena", exc)
+        ensemble, fe, _feats = self.fit_models(history)
+        if c.model_path:
+            meta = BundleMetadata(league=c.league_key, trained_until=str(latest), n_matches=len(history))
+            try:
+                save_bundle(ModelBundle(ensemble, fe, meta, c.calibrator), c.model_path)
+            except ModelStoreError as exc:
+                logger.warning("%s", exc)
+        return ensemble
 
     def evaluate_models(self, history: pd.DataFrame) -> dict[str, dict[str, float]]:
         """Validación fuera de muestra (cronológica) del mercado 1X2.
@@ -245,8 +285,10 @@ class AnalysisPipeline:
         if not odds.empty:
             odds = self.fetcher.link_odds_to_fixtures(odds, fixtures)
 
-        ensemble, _fe, _feats = self.fit_models(history)
+        ensemble = self.get_models(history)
         predictions = self.predict_fixtures(fixtures, ensemble)
+        if c.calibrator is not None:
+            predictions = {mid: c.calibrator.calibrate_prediction(p) for mid, p in predictions.items()}
 
         analyzer = HeuristicAnalyzer(history)
         reports = {mid: analyzer.match_report(p.home_team, p.away_team) for mid, p in predictions.items()}
