@@ -30,7 +30,9 @@ from predictive_odds.data_fetcher import (
     TheOddsApiProvider,
 )
 from predictive_odds.parlay_builder import ParlayConfig, ValueBetConfig
-from predictive_odds.pipeline import AnalysisPipeline, AnalysisResult, PipelineConfig
+from predictive_odds.pipeline import AnalysisPipeline, AnalysisResult, PipelineConfig, SlateResult, analyze_slate
+from predictive_odds.report import render_html, render_markdown
+from predictive_odds.risk import RiskConfig, risk_table
 from predictive_odds.statistical_models import InsufficientDataError
 
 DISCLAIMER = "Herramienta analítica: no coloca apuestas. Apostar implica riesgo de pérdida; juega con responsabilidad."
@@ -95,6 +97,19 @@ def run_backtest(seed: int, league_key: str, season: int, bankroll: float, use_m
     return Backtester(history, odds, config).run()
 
 
+@st.cache_data(show_spinner="Analizando la jornada multiliga…", ttl=900)
+def run_slate(source: str, seed: int, leagues: tuple[str, ...], season: int, bankroll: float, use_ml: bool,
+              max_singles: int, odds_key: str) -> SlateResult:
+    """Jornada multiliga memoizada (parlays entre ligas y tope global).
+
+    Returns:
+        Resultado multiliga.
+    """
+    seasons = (season - 1, season)
+    config = PipelineConfig(seasons=seasons, bankroll=bankroll, use_ml=use_ml, max_singles=max_singles)
+    return analyze_slate(build_fetcher(source, seed, seasons, odds_key), list(leagues), config)
+
+
 def pct(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     """Formatea columnas de probabilidad como porcentaje para mostrar."""
     out = df.copy()
@@ -131,6 +146,8 @@ def main() -> None:
         same_match = st.toggle("Permitir patas del mismo partido", value=False)
         exposure = st.slider("Exposición máxima del bankroll", 0.02, 0.3, 0.10, 0.01)
         db_path = st.text_input("Registro de apuestas (SQLite)", "bets.sqlite")
+        st.header("Informe")
+        report_slot = st.empty()
 
     try:
         result = run_analysis(source, seed, league_key, season, bankroll, use_ml, min_edge, value_weight,
@@ -148,7 +165,15 @@ def main() -> None:
     c3.metric("Parlays", len(result.parlays))
     c4.metric("Exposición sugerida", f"{result.total_stake:,.2f}", f"{100 * result.total_stake / bankroll:.1f}% del bankroll")
 
-    tabs = st.tabs(["Predicciones", "Value bets", "Parlays", "Tabla y ratings", "Backtest", "Registro"])
+    simulated = source == "Simulada"
+    with report_slot.container():
+        st.download_button("Descargar informe HTML", render_html(result, simulated),
+                           file_name=f"informe_{league_key}.html", mime="text/html")
+        st.download_button("Descargar informe Markdown", render_markdown(result, simulated),
+                           file_name=f"informe_{league_key}.md", mime="text/markdown")
+
+    tabs = st.tabs(["Predicciones", "Value bets", "Parlays", "Tabla y ratings", "Backtest", "Registro",
+                    "Riesgo", "Multiliga"])
 
     with tabs[0]:
         st.dataframe(pct(result.predictions_frame().drop(columns="match_id"), ["P(1)", "P(X)", "P(2)", "P(O2.5)", "P(BTTS)"]),
@@ -248,6 +273,39 @@ def main() -> None:
                     st.line_chart(history.reset_index(drop=True)["bankroll"])
         except TrackerError as exc:
             st.error(f"Registro de apuestas: {exc}")
+
+    with tabs[6]:
+        st.subheader("Riesgo Monte Carlo del staking")
+        st.caption("Repite la jornada actual N veces. recorte_edge: 0 = el modelo acierta; 0.5 = edge real a la "
+                   "mitad; 1 = el modelo no aporta; 1.5 = el modelo se equivoca en contra.")
+        rounds = st.slider("Jornadas a simular", 5, 76, 38)
+        if not result.value_bets:
+            st.info("Sin value bets en esta jornada: nada que simular.")
+        elif st.button("Simular riesgo", type="primary"):
+            table = risk_table(result.value_bets, config=RiskConfig(n_rounds=rounds, initial_bankroll=bankroll))
+            st.dataframe(table.round(3), hide_index=True, use_container_width=True)
+            st.caption("p_ruina = caer por debajo del 50% del bankroll; p_dd_30 = drawdown mayor al 30%.")
+
+    with tabs[7]:
+        st.subheader("Jornada multiliga")
+        st.caption("Analiza varias ligas, permite parlays entre ellas y aplica el tope de exposición de forma global.")
+        leagues = st.multiselect("Ligas", list(LEAGUES), default=["EPL", "LIGA_MX"],
+                                 format_func=lambda k: LEAGUES[k].name)
+        max_singles = st.slider("Máximo de sencillas", 5, 50, 15)
+        if leagues and st.button("Analizar jornada", type="primary"):
+            try:
+                slate = run_slate(source, seed, tuple(leagues), season, bankroll, use_ml, max_singles, odds_key)
+            except (DataFetchError, AuthenticationError) as exc:
+                st.error(str(exc))
+            else:
+                for key, err in slate.errors.items():
+                    st.warning(f"{LEAGUES[key].name} omitida: {err}")
+                st.metric("Exposición total", f"{slate.total_stake:,.2f}",
+                          f"{100 * slate.total_stake / bankroll:.1f}% del bankroll")
+                st.dataframe(pct(slate.value_bets_frame(), ["p_modelo", "p_implícita", "p_mercado", "EV_modelo",
+                                                            "EV_ajustado"]), hide_index=True, use_container_width=True)
+                st.dataframe(pct(slate.parlays_frame(), ["p_conjunta", "p_implícita", "EV"]),
+                             hide_index=True, use_container_width=True)
 
 
 if __name__ == "__main__":

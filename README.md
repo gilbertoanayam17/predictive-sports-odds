@@ -127,6 +127,7 @@ La barra lateral permite elegir la fuente de datos (simulada o real con `ODDS_AP
 - **Tabla y ratings**, más la validación fuera de muestra.
 - **Backtest:** ROI, CLV, curva de bankroll y calibración.
 - **Registro:** guarda las apuestas sugeridas y muestra el P&L.
+- **Riesgo** (Monte Carlo) y **Multiliga** (parlays entre ligas); el informe HTML/Markdown se descarga desde la barra lateral.
 
 La app no contiene lógica de negocio: solo llama a `AnalysisPipeline`, `Backtester` y `BetTracker`. Tiene una prueba de humo con `streamlit.testing` que corre en el CI.
 

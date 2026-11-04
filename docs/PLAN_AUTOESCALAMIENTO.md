@@ -54,7 +54,7 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 
 | # | Estado | Tarea | Valor | Depende de |
 |---|---|---|---|---|
-| 19 | [ ] | **App al día**: pestañas/acciones para jornada multiliga, riesgo Monte Carlo y descarga del informe | La UI cubre lo añadido después de la tarea 7 | 7, 11, 12, 16 |
+| 19 | [x] | **App al día**: pestañas/acciones para jornada multiliga, riesgo Monte Carlo y descarga del informe | La UI cubre lo añadido después de la tarea 7 | 7, 11, 12, 16 |
 | 20 | [x] | **Cobertura de tests**: medirla y cubrir huecos en los módulos críticos (dinero/liquidación) | Menos riesgo de errores silenciosos | — |
 
 ## Registro de ejecución
@@ -84,3 +84,4 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 2026-11-04 | Tope por partido (medición) | — | Backtest de 6 semillas: tope 2%/3% vs sin tope → drawdown medio 13.8%/13.4% vs 12.7%, crecimiento +41%/+42% vs +41%. Sin mejora de riesgo medible → `max_match_exposure=None` por defecto (disponible como opción) |
 | 2026-11-04 | Fase 3 completada | — | Backlog 1–18 terminado salvo #8 (Understat sin verificar en vivo por bloqueo de red) |
 | 2026-11-04 | #20 Cobertura | ver git log | 82% → 90% (CLI 0% → 69%, data_fetcher 77% → 87%). **Bug real encontrado y corregido:** en el formato "extra" de football-data (Liga MX) solo hay momios de cierre, así que el backtest real de Liga MX no habría tenido precios donde apostar; ahora usa el cierre de cada casa (backtest conservador). Tests con CSV en los formatos publicados, xG/lesiones de API-Football y humo del CLI |
+| 2026-11-04 | #19 App al día | ver git log | Descarga del informe (HTML/Markdown) en la barra lateral, pestaña **Riesgo** (Monte Carlo) y pestaña **Multiliga**; pruebas AppTest de ambas y verificación visual con Playwright. Fase 4 completada |
