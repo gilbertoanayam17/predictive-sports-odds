@@ -35,6 +35,7 @@ from predictive_odds.data_fetcher import (
 from predictive_odds.parlay_builder import ParlayConfig, ValueBetConfig, ValueBetFinder
 from predictive_odds import ui_html as ui
 from predictive_odds.domain import MatchPrediction
+from predictive_odds.explain import explain_pick
 from predictive_odds.performance import breakdown, cumulative, summarize
 from predictive_odds.pipeline import AnalysisPipeline, AnalysisResult, PipelineConfig, SlateResult, analyze_slate
 from predictive_odds.league_study import LeagueProfile, StudyConfig, run_study, save_profiles, study_frame
@@ -495,7 +496,12 @@ def main() -> None:
         else:
             st.markdown('<p class="note">Ordenadas por EV ajustado (modelo encogido hacia el mercado). El stake ya '
                         'incluye Kelly modificado y el tope de exposición.</p>', unsafe_allow_html=True)
-            st.markdown(ui.grid(ui.pick_ticket(p, result.bankroll, my_book, min_edge) for p in result.value_bets),
+            unknown = set(result.unknown_teams)
+            st.markdown(ui.grid(
+                ui.pick_ticket(p, result.bankroll, my_book, min_edge,
+                               explain_pick(p, result.predictions.get(p.match_id), result.reports.get(p.match_id),
+                                            result.adjustments, unknown))
+                for p in result.value_bets),
                         unsafe_allow_html=True)
             with st.expander("Ver como tabla"):
                 st.dataframe(pct(vb, ["p_modelo", "p_implícita", "p_mercado", "EV_modelo", "EV_ajustado"]),
