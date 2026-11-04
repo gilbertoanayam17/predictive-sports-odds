@@ -213,3 +213,17 @@ def test_pipeline_end_to_end(sim: SimulatedDataProvider) -> None:
     assert {"poisson_dixon_coles", "baseline_frecuencias"} <= set(result.evaluation)
     assert result.evaluation["poisson_dixon_coles"]["log_loss"] < result.evaluation["baseline_frecuencias"]["log_loss"]
     assert not result.value_bets_frame().empty
+
+
+def test_match_cap_scales_only_overexposed_matches() -> None:
+    from predictive_odds.parlay_builder import apply_match_cap
+
+    picks = [Pick("m1", "T", "H", "A", None, s, 2.0, "b", 0.6, stake_fraction=0.02)
+             for s in (Selection.home(), Selection.draw_no_bet(True), Selection.over(2.5))]
+    picks.append(Pick("m2", "T", "H", "A", None, Selection.home(), 2.0, "b", 0.6, stake_fraction=0.02))
+    capped = apply_match_cap(picks, 0.03)
+    assert sum(p.stake_fraction for p in capped if p.match_id == "m1") == pytest.approx(0.03)
+    assert capped[-1].stake_fraction == 0.02
+    assert apply_match_cap(picks, None) == picks
+    with pytest.raises(ValueError):
+        apply_match_cap(picks, 0.0)

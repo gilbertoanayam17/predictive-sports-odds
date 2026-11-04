@@ -3,6 +3,7 @@
 Backend en Python que analiza datos de fútbol para detectar **apuestas de valor** y construir **parlays** con gestión de riesgo (Kelly modificado). Empieza con Premier League, Champions League y Liga MX; la arquitectura no depende de ninguna liga ni deporte.
 
 > La reflexión de la Fase 1 (fuentes de datos y features) está en [`docs/fase1_reflexion.md`](docs/fase1_reflexion.md).
+> Guía práctica de operación diaria: [`docs/GUIA_USO.md`](docs/GUIA_USO.md). Progreso autónomo: [`docs/PLAN_AUTOESCALAMIENTO.md`](docs/PLAN_AUTOESCALAMIENTO.md).
 
 ## Inicio rápido
 

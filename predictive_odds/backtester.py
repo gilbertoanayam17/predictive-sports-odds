@@ -33,6 +33,7 @@ from .parlay_builder import (
     ValueBetConfig,
     ValueBetFinder,
     apply_exposure_cap,
+    apply_match_cap,
 )
 from .statistical_models import (
     EnsemblePredictor,
@@ -101,6 +102,7 @@ class BacktestConfig:
         ml_weight: Peso del ML.
         include_parlays: Si se apuestan también los parlays sugeridos.
         max_total_exposure: Exposición máxima por fecha.
+        max_match_exposure: Exposición máxima de las sencillas de un mismo partido.
         closing_bookmaker: Casa que representa la línea de cierre.
         poisson: Configuración de Poisson.
         value: Configuración de valor.
@@ -114,6 +116,7 @@ class BacktestConfig:
     ml_weight: float = 0.35
     include_parlays: bool = False
     max_total_exposure: float = 0.10
+    max_match_exposure: float | None = None
     closing_bookmaker: str = CLOSING_BOOKMAKER
     poisson: PoissonModelConfig = field(default_factory=PoissonModelConfig)
     value: ValueBetConfig = field(default_factory=ValueBetConfig)
@@ -250,6 +253,7 @@ class Backtester:
                                   "won": selection_wins(p.selection, *scores[p.match_id])})
             singles = [p for p in picks if finder.is_value(p)]
             parlays = builder.build(picks, preds) if c.include_parlays else []
+            singles = apply_match_cap(singles, c.max_match_exposure)
             singles, parlays, _ = apply_exposure_cap(singles, parlays, c.max_total_exposure)
 
             start_bankroll = bankroll

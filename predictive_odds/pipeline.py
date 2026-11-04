@@ -28,6 +28,7 @@ from .parlay_builder import (
     ValueBetConfig,
     ValueBetFinder,
     apply_exposure_cap,
+    apply_match_cap,
 )
 from .statistical_models import (
     EnsemblePredictor,
@@ -67,6 +68,7 @@ class PipelineConfig:
         max_model_age_days: Antigüedad máxima del bundle respecto al último partido.
         extra_leagues: Ligas domésticas adicionales para el modelo de Poisson
             multiliga (útil en competiciones internacionales como la UCL).
+        max_match_exposure: Exposición máxima de las sencillas de un mismo partido (``None`` = sin tope).
         max_singles: Máximo de sencillas sugeridas (las de mayor EV ajustado); ``None`` = sin límite.
         use_injuries: Si se ajustan las λ por lesiones/bajas reportadas.
         injury: Parámetros de la heurística de lesiones.
@@ -90,6 +92,7 @@ class PipelineConfig:
     use_injuries: bool = True
     extra_leagues: tuple[str, ...] = ()
     max_singles: int | None = None
+    max_match_exposure: float | None = None
     injury: InjuryImpactConfig = field(default_factory=InjuryImpactConfig)
 
 
@@ -366,6 +369,7 @@ class AnalysisPipeline:
         all_picks = finder.evaluate(predictions, odds)
         value_bets = sorted([p for p in all_picks if finder.is_value(p)], key=lambda p: p.adjusted_edge, reverse=True)
         value_bets = value_bets[:c.max_singles] if c.max_singles is not None else value_bets
+        value_bets = apply_match_cap(value_bets, c.max_match_exposure)
         parlays = ParlayBuilder(c.parlay).build(all_picks, predictions)
         value_bets, parlays, _ = apply_exposure_cap(value_bets, parlays, c.max_total_exposure)
 
@@ -452,6 +456,7 @@ def analyze_slate(fetcher: DataFetcher, league_keys: list[str], base: PipelineCo
     finder = ValueBetFinder(base.value)
     singles = sorted([p for p in all_picks if finder.is_value(p)], key=lambda p: p.adjusted_edge, reverse=True)
     singles = singles[:base.max_singles] if base.max_singles is not None else singles
+    singles = apply_match_cap(singles, base.max_match_exposure)
     parlays = ParlayBuilder(base.parlay).build(all_picks, predictions)
     singles, parlays, _ = apply_exposure_cap(singles, parlays, base.max_total_exposure)
     return SlateResult(base.bankroll, results, errors, singles, parlays)

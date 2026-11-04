@@ -713,8 +713,35 @@ def apply_exposure_cap(singles: Sequence[Pick], parlays: Sequence[Parlay],
             [replace(p, stake_fraction=p.stake_fraction * factor) for p in parlays], factor)
 
 
+def apply_match_cap(singles: Sequence[Pick], max_per_match: float | None) -> list[Pick]:
+    """Limita la exposición total de las sencillas de un MISMO partido.
+
+    Varias sencillas de un partido suelen estar correlacionadas (p. ej. DNB
+    visitante y AH visitante +0.25); sin tope, el riesgo se concentra.
+
+    Args:
+        singles: Sencillas con stake.
+        max_per_match: Fracción máxima del bankroll por partido (``None`` = sin tope).
+
+    Returns:
+        Sencillas con los stakes escalados donde se superaba el tope.
+
+    Raises:
+        ValueError: Si el tope no está en (0, 1].
+    """
+    if max_per_match is None:
+        return list(singles)
+    if not 0 < max_per_match <= 1:
+        raise ValueError("max_per_match debe estar en (0, 1]")
+    totals: dict[str, float] = {}
+    for p in singles:
+        totals[p.match_id] = totals.get(p.match_id, 0.0) + p.stake_fraction
+    return [replace(p, stake_fraction=p.stake_fraction * max_per_match / totals[p.match_id])
+            if totals[p.match_id] > max_per_match else p for p in singles]
+
+
 __all__ = [
-    "ConflictChecker", "KellyConfig", "Parlay", "ParlayBuilder", "ParlayConfig", "Pick", "ValueBetConfig",
+    "apply_match_cap", "ConflictChecker", "KellyConfig", "Parlay", "ParlayBuilder", "ParlayConfig", "Pick", "ValueBetConfig",
     "ValueBetFinder", "apply_exposure_cap", "expected_value", "implied_probability", "kelly_fraction",
     "modified_kelly", "remove_margin",
 ]
