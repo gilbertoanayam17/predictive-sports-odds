@@ -10,3 +10,4 @@ venv/
 models/
 *.joblib
 *.joblib.json
+*.sqlite

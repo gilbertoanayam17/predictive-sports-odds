@@ -6,6 +6,8 @@ Uso::
     python main.py --league LIGA_MX --bankroll 5000
     python main.py --live --league EPL   # datos reales: football-data.co.uk + The Odds API
     python main.py --backtest            # backtest walk-forward (ROI, CLV, drawdown, calibración)
+    python main.py --track bets.sqlite   # guarda las apuestas sugeridas
+    python main.py --track bets.sqlite --settle   # liquida con resultados y muestra el P&L
 
 En modo ``--live`` se requiere la variable de entorno ``ODDS_API_KEY``
 (y opcionalmente ``API_FOOTBALL_KEY`` para calendario/ligas sin CSV).
@@ -32,6 +34,7 @@ from predictive_odds.data_fetcher import (
     SimulationConfig,
     TheOddsApiProvider,
 )
+from predictive_odds.bet_tracker import BetTracker, TrackerError
 from predictive_odds.backtester import BacktestConfig, Backtester, BacktestResult
 from predictive_odds.parlay_builder import ParlayConfig
 from predictive_odds.statistical_models import InsufficientDataError
@@ -68,7 +71,8 @@ def build_fetcher(args: argparse.Namespace) -> DataFetcher:
         AuthenticationError: Si faltan API keys en modo en vivo.
     """
     if not args.live:
-        sim = SimulatedDataProvider(SimulationConfig(seed=args.seed, seasons=(args.season - 1, args.season)))
+        sim = SimulatedDataProvider(SimulationConfig(seed=args.seed, seasons=(args.season - 1, args.season),
+                                                     played_rounds_current=args.played_rounds))
         return DataFetcher(history_provider=sim, odds_provider=sim)
     league = get_league(args.league)
     odds_provider = TheOddsApiProvider(os.environ.get("ODDS_API_KEY", ""), include_btts=args.btts)
@@ -214,6 +218,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--season", type=int, default=2025, help="Temporada actual (año de inicio)")
     p.add_argument("--bankroll", type=float, default=1000.0)
     p.add_argument("--seed", type=int, default=7, help="Semilla de la simulación")
+    p.add_argument("--played-rounds", type=int, default=28,
+                   help="Simulación: jornadas jugadas de la temporada actual (sube a 29 para liquidar)")
     p.add_argument("--live", action="store_true", help="Usar APIs reales (requiere ODDS_API_KEY)")
     p.add_argument("--btts", action="store_true", help="En vivo: pedir también momios BTTS (más créditos)")
     p.add_argument("--no-ml", action="store_true", help="Desactivar el modelo de ML")
@@ -221,6 +227,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--extra-leagues", nargs="*", default=None,
                    help="Ligas domésticas para el modelo multiliga (por defecto EPL si la liga es internacional)")
     p.add_argument("--model-path", default=None, help="Bundle .joblib: reutiliza modelos guardados y guarda al reentrenar")
+    p.add_argument("--track", default=None, help="Registro SQLite: guarda las apuestas sugeridas del análisis")
+    p.add_argument("--settle", action="store_true", help="Con --track: liquida pendientes y muestra el rendimiento")
     p.add_argument("--backtest", action="store_true", help="Ejecutar un backtest walk-forward en vez del análisis")
     p.add_argument("--parlays", action="store_true", help="Backtest: incluir también los parlays")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -232,6 +240,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
+    if args.settle:
+        if not args.track:
+            print("--settle requiere --track <archivo.sqlite>", file=sys.stderr)
+            return 2
+        return run_tracker(args)
     try:
         league = get_league(args.league)
         if args.backtest:
@@ -259,6 +272,40 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Datos insuficientes: {exc}", file=sys.stderr)
         return 5
     print_report(result, simulated=not args.live)
+    if args.track:
+        try:
+            with BetTracker(args.track) as tracker:
+                new = tracker.record_analysis(result.value_bets, result.parlays, result.bankroll)
+                print(f"\nRegistro {args.track}: {new} apuesta(s) nueva(s) guardada(s).")
+        except TrackerError as exc:
+            print(f"Error en el registro de apuestas: {exc}", file=sys.stderr)
+            return 6
+    return 0
+
+
+def run_tracker(args: argparse.Namespace) -> int:
+    """Liquida las apuestas pendientes con los resultados disponibles y muestra el rendimiento.
+
+    Args:
+        args: Argumentos de línea de comandos.
+
+    Returns:
+        Código de salida.
+    """
+    try:
+        league = get_league(args.league)
+        fetcher = build_fetcher(args)
+        results = fetcher.history_provider.fetch_matches(league, args.season)
+        with BetTracker(args.track) as tracker:
+            settled = tracker.settle(results)
+            section(f"REGISTRO DE APUESTAS — {args.track}")
+            print(f"Liquidadas ahora: {settled}")
+            for k, v in tracker.summary(initial_bankroll=args.bankroll).items():
+                print(f"  {k:<20} {v:>12,.4f}")
+            show(tracker.by_market().round(3), "(sin apuestas liquidadas)")
+    except (ConfigurationError, DataFetchError, TrackerError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 6
     return 0
 
 

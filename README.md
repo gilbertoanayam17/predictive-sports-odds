@@ -12,6 +12,8 @@ python main.py                                  # EPL simulada: no necesita red 
 python main.py --league LIGA_MX --bankroll 5000
 python main.py --same-match                     # permite parlays con varias patas del mismo partido
 python main.py --backtest                       # backtest walk-forward: ROI, CLV, drawdown, calibración
+python main.py --track bets.sqlite              # guarda las apuestas sugeridas (idempotente)
+python main.py --track bets.sqlite --settle --played-rounds 29   # liquida (en la simulación, juega la jornada 29)
 python -m pytest
 ```
 
@@ -36,6 +38,7 @@ predictive_odds/
 ├── calibration.py         # Calibración isotónica/Platt, ECE y tabla de fiabilidad
 ├── model_store.py         # Guardar/cargar modelos entrenados (joblib + metadatos)
 ├── injuries.py            # Bajas → multiplicadores de ataque/defensa sobre λ
+├── bet_tracker.py         # Registro SQLite: apuestas, liquidación, P&L y CLV
 └── pipeline.py            # AnalysisPipeline.run() → AnalysisResult (DataFrames listos para UI)
 main.py                    # Demo de punta a punta en la terminal
 ```
@@ -78,6 +81,9 @@ En competiciones internacionales, Poisson se entrena junto con las ligas domést
 
 ### Lesiones (`injuries.py`)
 Las bajas (API-Football o simuladas) se traducen en multiplicadores de ataque y defensa que modifican las λ de Poisson. Como el ML no conoce ese contexto, sus probabilidades se corrigen en la misma proporción. Medido en la simulación (20 jornadas con bajas que las casas sí descuentan), el EV real de los value bets sube de 6.3% a 6.5%, y de 5.7% a 6.1% en los partidos con bajas. La mejora es moderada porque el encogimiento hacia el mercado ya absorbía parte del efecto. Activado por defecto (`use_injuries=True`).
+
+### Registro de apuestas (`bet_tracker.py`)
+SQLite con restricciones de integridad. Guarda sencillas y parlays (sin duplicar si se reejecuta el análisis), liquida cuando hay resultados (un parlay, cuando terminaron todas sus patas), permite anular apuestas, guarda la probabilidad de cierre para el CLV y devuelve el P&L, el ROI por mercado y la curva de bankroll. Solo registra; nunca coloca apuestas.
 
 ### Calibración y persistencia
 - `python main.py --model-path models/epl.joblib` reutiliza los modelos guardados mientras no tengan más de 7 días de antigüedad respecto al último partido, y los guarda al reentrenar (escritura atómica, metadatos en `.json`). Solo se deben cargar bundles propios, porque joblib usa pickle.
