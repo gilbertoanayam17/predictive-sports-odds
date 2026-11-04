@@ -12,9 +12,10 @@ La app no contiene lógica de negocio: solo llama a la API de
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from dataclasses import replace
+from pathlib import Path
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -32,6 +33,8 @@ from predictive_odds.data_fetcher import (
     TheOddsApiProvider,
 )
 from predictive_odds.parlay_builder import ParlayConfig, ValueBetConfig
+from predictive_odds import ui_html as ui
+from predictive_odds.domain import MatchPrediction
 from predictive_odds.performance import breakdown, cumulative, summarize
 from predictive_odds.pipeline import AnalysisPipeline, AnalysisResult, PipelineConfig, SlateResult, analyze_slate
 from predictive_odds.league_study import LeagueProfile, StudyConfig, run_study, save_profiles, study_frame
@@ -140,8 +143,9 @@ def show_backtest(bt: BacktestResult) -> None:
     st.caption(f"{int(m['apuestas'])} apuestas · acierto {100 * m.get('acierto', 0):.1f}% · "
                f"momio medio {m.get('momio_medio', 0):.2f}")
     if not bt.bankroll.empty:
-        st.line_chart(bt.bankroll.set_index("date")["bankroll"])
-    st.dataframe(bt.by_market().round(3), use_container_width=True)
+        st.altair_chart(line_chart(bt.bankroll, "date", {"bankroll": "Bankroll"}, "Bankroll"),
+                        use_container_width=True)
+    st.dataframe(bt.by_market().round(3).rename_axis("mercado"), use_container_width=True)
     st.subheader("Calibración")
     st.dataframe(bt.calibration().round(3), hide_index=True, use_container_width=True)
     st.caption("Un CLV positivo sostenido es la mejor señal de edge real; el ROI a corto plazo es ruidoso.")
@@ -247,6 +251,73 @@ def load_streamlit_secrets() -> list[str]:
     return loaded
 
 
+ICON = ("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 38 38'>"
+        "<rect width='38' height='38' rx='7' fill='%230f1613'/><path d='M8 27 C13 15, 23 11, 30 10' fill='none' "
+        "stroke='%23e8a93b' stroke-width='3.4' stroke-linecap='round'/></svg>")
+CHALK, CHALK_3, LINE = "#e9ece6", "#7c877f", "#26332c"
+LEAN = {"HOME": "Local", "DRAW": "Empate", "AWAY": "Visitante"}
+SPANISH_MONTHS = ("['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'][month(datum.value)]"
+                  " + ' ' + timeFormat(datum.value, '%y')")
+
+
+def _themed(chart: alt.Chart) -> alt.Chart:
+    """Estilo común de las gráficas: fondo transparente, ejes discretos, tipografía de la app."""
+    return (chart.configure(background="transparent", font="IBM Plex Sans")
+            .configure_view(strokeWidth=0)
+            .configure_axis(labelColor=CHALK_3, titleColor=CHALK_3, gridColor=LINE, domainColor=LINE,
+                            tickColor=LINE, labelFontSize=11, titleFontSize=11, titleFontWeight="normal")
+            .configure_legend(labelColor=CHALK, titleColor=CHALK_3, orient="top", labelFontSize=12))
+
+
+def line_chart(df: pd.DataFrame, x: str, series: dict[str, str], y_title: str) -> alt.Chart:
+    """Líneas finas (2 px) con tooltip; leyenda solo si hay más de una serie.
+
+    Args:
+        df: Datos.
+        x: Columna del eje X.
+        series: ``columna -> etiqueta`` de cada serie (colores de la paleta validada, en orden fijo).
+        y_title: Título del eje Y.
+    """
+    colors = [ui.HOME, ui.AWAY]
+    long = df.melt(id_vars=[x], value_vars=list(series), var_name="serie", value_name="valor")
+    long["serie"] = long["serie"].map(series)
+    scale = alt.Scale(domain=list(series.values()), range=colors[:len(series)])
+    legend = alt.Legend(title=None) if len(series) > 1 else None
+    if pd.api.types.is_numeric_dtype(df[x]):
+        x_enc = alt.X(f"{x}:Q", title=None)
+    else:  # meses en español (Vega formatea las fechas en inglés)
+        x_enc = alt.X(f"{x}:T", title=None, axis=alt.Axis(labelExpr=SPANISH_MONTHS))
+    chart = alt.Chart(long).mark_line(strokeWidth=2).encode(
+        x=x_enc,
+        y=alt.Y("valor:Q", title=y_title, scale=alt.Scale(zero=False)),
+        color=alt.Color("serie:N", scale=scale, legend=legend),
+        tooltip=[alt.Tooltip(f"{x}", title="Punto"), alt.Tooltip("serie:N", title="Serie"),
+                 alt.Tooltip("valor:Q", title=y_title, format=",.2f")],
+    ).properties(height=260)
+    return _themed(chart)
+
+
+def score_heatmap(pred: MatchPrediction, n: int = 6) -> alt.Chart:
+    """Mapa de calor de marcadores (escala secuencial de un solo tono) con el % escrito."""
+    rows = [{"local": str(i), "visitante": str(j), "p": float(pred.score_matrix[i, j])}
+            for i in range(n) for j in range(n)]
+    data = pd.DataFrame(rows)
+    base = alt.Chart(data).encode(
+        x=alt.X("visitante:O", title=f"Goles {pred.away_team}", axis=alt.Axis(labelAngle=0)),
+        y=alt.Y("local:O", title=f"Goles {pred.home_team}", sort="descending"),
+    )
+    cells = base.mark_rect(cornerRadius=3, stroke="#0f1613", strokeWidth=2).encode(
+        color=alt.Color("p:Q", scale=alt.Scale(range=["#18242f", "#3987e5"]), legend=None),
+        tooltip=[alt.Tooltip("local:O", title="Local"), alt.Tooltip("visitante:O", title="Visitante"),
+                 alt.Tooltip("p:Q", title="Probabilidad", format=".1%")],
+    )
+    labels = base.mark_text(font="IBM Plex Mono", fontSize=11).encode(
+        text=alt.condition("datum.p >= 0.01", alt.Text("p:Q", format=".0%"), alt.value("")),
+        color=alt.condition("datum.p >= 0.08", alt.value("#0b0f0d"), alt.value(CHALK)),
+    )
+    return _themed((cells + labels).properties(height=280))
+
+
 def pct(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     """Formatea columnas de probabilidad como porcentaje para mostrar."""
     out = df.copy()
@@ -261,9 +332,9 @@ def main() -> None:
     load_env()  # claves desde .env (si existe); las variables del sistema tienen prioridad
     load_streamlit_secrets()  # en Streamlit Community Cloud las claves llegan como secrets
     env_loaded = env_file_keys()  # en cada recarga, no solo la primera
-    st.set_page_config(page_title="Predictive Sports Odds", page_icon="⚽", layout="wide")
-    st.title("⚽ Predictive Sports Odds")
-    st.caption(DISCLAIMER)
+    st.set_page_config(page_title="Predictive Sports Odds", page_icon=ICON, layout="wide")
+    st.markdown(ui.CSS, unsafe_allow_html=True)
+    header_slot = st.empty()
 
     with st.sidebar:
         st.header("Datos")
@@ -327,6 +398,10 @@ def main() -> None:
         st.header("Informe")
         report_slot = st.empty()
 
+    header_slot.markdown(ui.masthead(LEAGUES[league_key].name, source == "Real", season), unsafe_allow_html=True)
+    with st.sidebar:
+        st.caption(DISCLAIMER)
+
     if source == "Real" and not odds_key.strip():
         st.info(
             "### Cómo usar datos reales\n"
@@ -381,8 +456,12 @@ def main() -> None:
                     "Riesgo", "Multiliga", "Rendimiento"])
 
     with tabs[0]:
-        st.dataframe(pct(result.predictions_frame().drop(columns="match_id"), ["P(1)", "P(X)", "P(2)", "P(O2.5)", "P(BTTS)"]),
-                     hide_index=True, use_container_width=True)
+        counts = ui.value_counts(result.value_bets)
+        st.markdown(ui.grid(ui.match_card(p, counts.get(mid, 0)) for mid, p in result.predictions.items()),
+                    unsafe_allow_html=True)
+        with st.expander("Ver como tabla"):
+            st.dataframe(pct(result.predictions_frame().drop(columns="match_id"),
+                             ["P(1)", "P(X)", "P(2)", "P(O2.5)", "P(BTTS)"]), hide_index=True, use_container_width=True)
         labels = {mid: f"{p.home_team} vs {p.away_team}" for mid, p in result.predictions.items()}
         mid = st.selectbox("Detalle del partido", list(labels), format_func=labels.__getitem__)
         pred, rep = result.predictions[mid], result.reports[mid]
@@ -393,7 +472,7 @@ def main() -> None:
                      f"en casa `{rep.home.form_venue.results}`")
             st.write(f"**{pred.away_team}** — pos {rep.away.position}, forma `{rep.away.form_overall.results}`, "
                      f"fuera `{rep.away.form_venue.results}`")
-            st.write(f"H2H: {rep.h2h.a_wins}G-{rep.h2h.draws}E-{rep.h2h.b_wins}P · índice {rep.score:+.3f} → **{rep.lean.value}**")
+            st.write(f"H2H: {rep.h2h.a_wins}G-{rep.h2h.draws}E-{rep.h2h.b_wins}P · índice {rep.score:+.3f} → **{LEAN[rep.lean.value]}**")
             for note in rep.notes:
                 st.write(f"• {note}")
             for team in (pred.home_team, pred.away_team):
@@ -401,28 +480,31 @@ def main() -> None:
                     a = result.adjustments[team]
                     st.warning(f"{team}: ataque ×{a.attack:.2f}, goles recibidos ×{a.defense:.2f} ({a.reason})")
         with right:
-            st.subheader("Matriz de marcadores (%)")
-            n = 6
-            mat = pd.DataFrame(100 * pred.score_matrix[:n, :n], index=[f"{i}" for i in range(n)],
-                               columns=[f"{j}" for j in range(n)]).round(1)
-            mat.index.name, mat.columns.name = pred.home_team, pred.away_team
-            st.dataframe(mat, use_container_width=True)
+            st.subheader("Marcadores más probables")
+            st.altair_chart(score_heatmap(pred), use_container_width=True)
 
     with tabs[1]:
         vb = result.value_bets_frame()
         if vb.empty:
             st.info("Ninguna selección supera el umbral de valor.")
         else:
-            st.dataframe(pct(vb, ["p_modelo", "p_implícita", "p_mercado", "EV_modelo", "EV_ajustado"]),
-                         hide_index=True, use_container_width=True)
-            st.caption("Probabilidades y EV en %. El stake ya incluye Kelly modificado y el tope de exposición.")
+            st.markdown('<p class="note">Ordenadas por EV ajustado (modelo encogido hacia el mercado). El stake ya '
+                        'incluye Kelly modificado y el tope de exposición.</p>', unsafe_allow_html=True)
+            st.markdown(ui.grid(ui.pick_ticket(p, result.bankroll) for p in result.value_bets),
+                        unsafe_allow_html=True)
+            with st.expander("Ver como tabla"):
+                st.dataframe(pct(vb, ["p_modelo", "p_implícita", "p_mercado", "EV_modelo", "EV_ajustado"]),
+                             hide_index=True, use_container_width=True)
 
     with tabs[2]:
         pf = result.parlays_frame()
         if pf.empty:
             st.info("No hay combinaciones que cumplan los criterios de riesgo y valor.")
         else:
-            st.dataframe(pct(pf, ["p_conjunta", "p_implícita", "EV"]), hide_index=True, use_container_width=True)
+            st.markdown(ui.grid(ui.parlay_ticket(par, result.bankroll) for par in result.parlays),
+                        unsafe_allow_html=True)
+            with st.expander("Ver como tabla"):
+                st.dataframe(pct(pf, ["p_conjunta", "p_implícita", "EV"]), hide_index=True, use_container_width=True)
             for i, par in enumerate(result.parlays, 1):
                 for w in par.warnings:
                     st.warning(f"Parlay {i}: {w}")
@@ -472,7 +554,9 @@ def main() -> None:
                 st.dataframe(bets.drop(columns=["bet_key", "legs"]), hide_index=True, use_container_width=True)
                 history = tracker.bankroll_history(bankroll)
                 if not history.empty:
-                    st.line_chart(history.reset_index(drop=True)["bankroll"])
+                    curve = history.reset_index(drop=True).reset_index(names="apuesta")
+                    st.altair_chart(line_chart(curve, "apuesta", {"bankroll": "Bankroll"}, "Bankroll"),
+                                    use_container_width=True)
             backup_panel(db_path)
         except TrackerError as exc:
             st.error(f"Registro de apuestas: {exc}")
@@ -542,7 +626,8 @@ def performance_panel(db_path: str) -> None:
         st.caption(f"Solo el {summary.closing_coverage:.0%} de las apuestas tiene momio de cierre: el esperado "
                    "usa sobre todo la probabilidad del modelo (optimista). Usa capturas de momios para tener "
                    "el cierre propio.")
-    st.line_chart(cumulative(bets).set_index("n")[["real", "esperado"]])
+    st.altair_chart(line_chart(cumulative(bets), "n", {"real": "Real", "esperado": "Esperado (cierre)"},
+                               "Beneficio acumulado"), use_container_width=True)
     left, right = st.columns(2)
     left.markdown("**Por liga**")
     left.dataframe(pct(breakdown(bets, "league"), ["roi", "roi_esperado", "clv_medio", "acierto"]).round(2),

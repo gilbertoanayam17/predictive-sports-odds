@@ -1,3 +1,12 @@
 [runner]
 # Sin "magic": evita que Streamlit muestre o reinterprete expresiones sueltas.
 magicEnabled = false
+
+[theme]
+# Identidad "pizarra táctica": verde pizarra, texto tiza y acento ámbar de marcador.
+base = "dark"
+primaryColor = "#e8a93b"
+backgroundColor = "#0f1613"
+secondaryBackgroundColor = "#18221d"
+textColor = "#e9ece6"
+font = "sans serif"

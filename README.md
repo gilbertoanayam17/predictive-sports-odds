@@ -47,6 +47,7 @@ predictive_odds/
 ├── xg_sources.py          # merge_xg (fusión de xG de cualquier fuente) + Understat (experimental)
 ├── tuning.py              # Ajuste de hiperparámetros con validación cronológica
 ├── risk.py                # Monte Carlo del bankroll: ruina, drawdown, fracción de Kelly
+├── ui_html.py             # Componentes visuales de la app (tarjetas, boletos, tema)
 ├── report.py              # Informe exportable en Markdown o HTML autocontenido
 ├── odds_history.py        # Snapshots de momios: movimiento de línea y cierre propio para CLV
 └── pipeline.py            # AnalysisPipeline.run() → AnalysisResult (DataFrames listos para UI)
