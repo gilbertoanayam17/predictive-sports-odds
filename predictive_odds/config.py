@@ -31,6 +31,7 @@ class LeagueConfig:
         football_data_format: ``"main"`` (un CSV por temporada) o ``"extra"``
             (un CSV con todas las temporadas, usado para ligas como Liga MX).
         sample_teams: Equipos usados por el proveedor simulado.
+        calendar_year: Temporada por año natural (p. ej. MLS: febrero-noviembre).
         is_international: Competición entre clubes de varias ligas (p. ej. UCL);
             el modelo multiliga usa las ligas domésticas para comparar equipos.
     """
@@ -45,6 +46,7 @@ class LeagueConfig:
     football_data_format: Literal["main", "extra"] | None = None
     sample_teams: tuple[str, ...] = ()
     is_international: bool = False
+    calendar_year: bool = False
 
 
 LEAGUES: dict[str, LeagueConfig] = {
@@ -138,6 +140,47 @@ LEAGUES: dict[str, LeagueConfig] = {
             "St Pauli", "Union Berlin", "VfB Stuttgart", "Werder Bremen", "Wolfsburg",
         ),
     ),
+    "LIGUE_1": LeagueConfig(
+        key="LIGUE_1", name="Ligue 1", country="France", api_football_id=61,
+        odds_api_sport_key="soccer_france_ligue_one", football_data_code="F1", football_data_format="main",
+        sample_teams=("Angers", "Auxerre", "Brest", "Le Havre", "Lens", "Lille", "Lorient", "Lyon", "Marseille",
+                      "Metz", "Monaco", "Nantes", "Nice", "Paris FC", "Paris Saint-Germain", "Rennes",
+                      "Strasbourg", "Toulouse"),
+    ),
+    "EREDIVISIE": LeagueConfig(
+        key="EREDIVISIE", name="Eredivisie", country="Netherlands", api_football_id=88,
+        odds_api_sport_key="soccer_netherlands_eredivisie", football_data_code="N1", football_data_format="main",
+        sample_teams=("Ajax", "AZ Alkmaar", "Excelsior", "Feyenoord", "Fortuna Sittard", "Go Ahead Eagles",
+                      "Groningen", "Heerenveen", "Heracles", "NAC Breda", "NEC Nijmegen", "PEC Zwolle",
+                      "PSV Eindhoven", "Sparta Rotterdam", "Telstar", "Twente", "Utrecht", "Volendam"),
+    ),
+    "CHAMPIONSHIP": LeagueConfig(
+        key="CHAMPIONSHIP", name="Championship", country="England", api_football_id=40,
+        odds_api_sport_key="soccer_efl_champ", football_data_code="E1", football_data_format="main",
+        sample_teams=("Birmingham", "Blackburn", "Bristol City", "Charlton", "Coventry", "Derby", "Hull",
+                      "Ipswich", "Leicester", "Middlesbrough", "Millwall", "Norwich", "Oxford", "Portsmouth",
+                      "Preston", "QPR", "Sheffield United", "Sheffield Wednesday", "Southampton", "Stoke",
+                      "Swansea", "Watford", "West Brom", "Wrexham"),
+    ),
+    "PRIMEIRA_LIGA": LeagueConfig(
+        key="PRIMEIRA_LIGA", name="Primeira Liga", country="Portugal", api_football_id=94,
+        odds_api_sport_key="soccer_portugal_primeira_liga", football_data_code="P1", football_data_format="main",
+        sample_teams=("Alverca", "Arouca", "AVS", "Benfica", "Braga", "Casa Pia", "Estoril", "Estrela",
+                      "Famalicao", "Gil Vicente", "Moreirense", "Nacional", "Porto", "Rio Ave", "Santa Clara",
+                      "Sporting CP", "Tondela", "Vitoria Guimaraes"),
+    ),
+    "MLS": LeagueConfig(
+        key="MLS", name="MLS", country="USA", api_football_id=253,
+        odds_api_sport_key="soccer_usa_mls", football_data_code="USA", football_data_format="extra",
+        calendar_year=True,
+        sample_teams=("Atlanta United", "Austin FC", "Charlotte FC", "Chicago Fire", "Colorado Rapids",
+                      "Columbus Crew", "DC United", "FC Cincinnati", "FC Dallas", "Houston Dynamo", "Inter Miami",
+                      "LA Galaxy", "Los Angeles FC", "Minnesota United", "CF Montreal", "Nashville SC",
+                      "New England Revolution", "New York City FC", "New York Red Bulls", "Orlando City",
+                      "Philadelphia Union", "Portland Timbers", "Real Salt Lake", "San Diego FC",
+                      "San Jose Earthquakes", "Seattle Sounders", "Sporting Kansas City", "St. Louis City",
+                      "Toronto FC", "Vancouver Whitecaps"),
+    ),
 }
 
 
@@ -187,6 +230,20 @@ def register_league(config: LeagueConfig, *, overwrite: bool = False) -> None:
     if key in LEAGUES and not overwrite:
         raise ConfigurationError(f"La liga '{key}' ya está registrada")
     LEAGUES[key] = config
+
+
+def season_for(league_key: str, today: date | None = None) -> int:
+    """Temporada en curso de una liga concreta (año natural para ligas como la MLS).
+
+    Args:
+        league_key: Liga.
+        today: Fecha de referencia (por defecto, hoy).
+
+    Returns:
+        Año de la temporada.
+    """
+    d = today or date.today()
+    return d.year if get_league(league_key).calendar_year else current_season(d)
 
 
 def current_season(today: date | None = None) -> int:

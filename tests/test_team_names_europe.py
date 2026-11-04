@@ -1,4 +1,9 @@
-"""Emparejamiento de nombres entre football-data.co.uk y The Odds API (ligas europeas)."""
+"""Emparejamiento de nombres entre football-data.co.uk y The Odds API.
+
+Los nombres de cada fuente son los esperados según sus convenciones; no se
+pudieron verificar en vivo (sin red). Si alguno no casa en la práctica, la app
+lo muestra como "Sin historial" y se corrige con un alias.
+"""
 
 from __future__ import annotations
 
@@ -31,6 +36,34 @@ PAIRS: dict[str, list[tuple[str, str]]] = {
         ("Mainz", "FSV Mainz 05"), ("RB Leipzig", "RB Leipzig"), ("St Pauli", "FC St. Pauli"),
         ("Union Berlin", "Union Berlin"), ("Stuttgart", "VfB Stuttgart"), ("Werder Bremen", "Werder Bremen"),
         ("Wolfsburg", "VfL Wolfsburg"),
+    ],
+    "LIGUE_1": [
+        ("Paris SG", "Paris Saint Germain"), ("Paris FC", "Paris FC"), ("Marseille", "Marseille"),
+        ("Lyon", "Lyon"), ("Monaco", "AS Monaco"), ("Lens", "RC Lens"), ("Lille", "Lille"), ("Rennes", "Rennes"),
+        ("Le Havre", "Le Havre"), ("Strasbourg", "Strasbourg"),
+    ],
+    "EREDIVISIE": [
+        ("Ajax", "Ajax"), ("PSV Eindhoven", "PSV Eindhoven"), ("Twente", "FC Twente"), ("Utrecht", "FC Utrecht"),
+        ("For Sittard", "Fortuna Sittard"), ("Heracles", "Heracles Almelo"), ("Nijmegen", "NEC Nijmegen"),
+        ("Zwolle", "PEC Zwolle"), ("AZ Alkmaar", "AZ Alkmaar"), ("Volendam", "FC Volendam"),
+    ],
+    "CHAMPIONSHIP": [
+        ("Sheffield Weds", "Sheffield Wednesday"), ("Sheffield United", "Sheffield United"),
+        ("West Brom", "West Bromwich Albion"), ("QPR", "Queens Park Rangers"), ("Preston", "Preston North End"),
+        ("Hull", "Hull City"), ("Ipswich", "Ipswich Town"), ("Coventry", "Coventry City"), ("Wrexham", "Wrexham AFC"),
+        ("Bristol City", "Bristol City"),
+    ],
+    "PRIMEIRA_LIGA": [
+        ("Sp Lisbon", "Sporting Lisbon"), ("Porto", "FC Porto"), ("Benfica", "Benfica"), ("Sp Braga", "Braga"),
+        ("Guimaraes", "Vitoria Guimaraes"), ("Estrela", "Estrela Amadora"), ("AVS", "AVS Futebol SAD"),
+        ("Gil Vicente", "Gil Vicente"),
+    ],
+    "MLS": [
+        ("Atlanta Utd", "Atlanta United FC"), ("Los Angeles Galaxy", "LA Galaxy"), ("Los Angeles FC", "Los Angeles FC"),
+        ("DC United", "D.C. United"), ("CF Montreal", "CF Montréal"), ("Inter Miami", "Inter Miami CF"),
+        ("New York City", "New York City FC"), ("New York Red Bulls", "New York Red Bulls"),
+        ("Seattle Sounders", "Seattle Sounders FC"), ("St. Louis City", "St. Louis City SC"),
+        ("Columbus Crew", "Columbus Crew SC"), ("Austin FC", "Austin FC"),
     ],
 }
 

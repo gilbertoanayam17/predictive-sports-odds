@@ -22,7 +22,7 @@ import sys
 
 import pandas as pd
 
-from predictive_odds.config import ConfigurationError, current_season, get_league, selectable_leagues
+from predictive_odds.config import ConfigurationError, current_season, get_league, season_for, selectable_leagues
 from predictive_odds.data_fetcher import (
     AuthenticationError,
     DataFetcher,
@@ -348,8 +348,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--leagues", nargs="+", default=None,
                    help="Jornada multiliga (p. ej. --leagues EPL LIGA_MX UCL): parlays entre ligas y tope global")
     p.add_argument("--max-singles", type=int, default=None, help="Máximo de sencillas sugeridas (mayor EV ajustado)")
-    p.add_argument("--season", type=int, default=current_season(),
-                   help="Temporada actual (año de inicio; por defecto la temporada en curso)")
+    p.add_argument("--season", type=int, default=None,
+                   help="Temporada actual (año de inicio; por defecto la temporada en curso de la liga)")
     p.add_argument("--bankroll", type=float, default=1000.0)
     p.add_argument("--seed", type=int, default=7, help="Semilla de la simulación")
     p.add_argument("--played-rounds", type=int, default=28,
@@ -390,6 +390,11 @@ def main(argv: list[str] | None = None) -> int:
     """Punto de entrada: ejecuta el flujo completo y devuelve el código de salida."""
     load_env()  # ODDS_API_KEY / API_FOOTBALL_KEY desde .env (las variables del sistema tienen prioridad)
     args = parse_args(argv)
+    if args.season is None:
+        try:
+            args.season = season_for(args.league)
+        except ConfigurationError:
+            args.season = current_season()  # la liga inválida se informa más adelante
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
     if args.telegram_setup:

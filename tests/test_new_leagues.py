@@ -26,7 +26,9 @@ def test_selectable_leagues_exclude_champions() -> None:
         assert cfg.football_data_code and cfg.football_data_format == "main" and cfg.odds_api_sport_key
 
 
-@pytest.mark.parametrize("key,teams", [("LA_LIGA", 20), ("SERIE_A", 20), ("BUNDESLIGA", 18)])
+@pytest.mark.parametrize("key,teams", [("LA_LIGA", 20), ("SERIE_A", 20), ("BUNDESLIGA", 18), ("LIGUE_1", 18),
+                                       ("EREDIVISIE", 18), ("CHAMPIONSHIP", 24), ("PRIMEIRA_LIGA", 18),
+                                       ("MLS", 30)])
 def test_new_leagues_run_end_to_end(key: str, teams: int) -> None:
     sim = SimulatedDataProvider()
     r = AnalysisPipeline(DataFetcher(sim, odds_provider=sim),
@@ -55,3 +57,13 @@ def test_api_football_free_plan_error_is_explained() -> None:
                "response": []}
     with pytest.raises(ProviderNotSupportedError, match="plan gratuito"):
         ApiFootballProvider("k", client=_Client(payload)).fetch_matches(get_league("EPL"), 2026)
+
+
+def test_mls_season_follows_calendar_year() -> None:
+    from datetime import date
+
+    from predictive_odds.config import season_for
+
+    assert season_for("MLS", date(2027, 3, 15)) == 2027
+    assert season_for("EPL", date(2027, 3, 15)) == 2026
+    assert season_for("MLS", date(2026, 11, 4)) == 2026

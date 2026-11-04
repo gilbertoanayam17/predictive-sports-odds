@@ -21,7 +21,14 @@ import streamlit as st
 
 from predictive_odds.backtester import BacktestConfig, Backtester, BacktestResult
 from predictive_odds.bet_tracker import BetTracker, TrackerError, restore_backup
-from predictive_odds.config import LEAGUES, ConfigurationError, current_season, get_league, selectable_leagues
+from predictive_odds.config import (
+    LEAGUES,
+    ConfigurationError,
+    current_season,
+    get_league,
+    season_for,
+    selectable_leagues,
+)
 from predictive_odds.connectivity import API_FOOTBALL_SIGNUP, ODDS_API_SIGNUP, check_all
 from predictive_odds.data_fetcher import (
     AuthenticationError,
@@ -342,9 +349,10 @@ def main() -> None:
         source = st.radio("Fuente", ["Simulada", "Real"], horizontal=True,
                           help="Real: histórico de football-data.co.uk + momios de The Odds API")
         league_key = st.selectbox("Liga", selectable_leagues(), format_func=lambda k: LEAGUES[k].name)
-        season = int(st.number_input("Temporada actual", 2015, 2035, current_season(),
-                                     help="Año de inicio de la temporada en curso (2026 = 2026/27). "
-                                          "Se entrena con esta y la anterior."))
+        season = int(st.number_input("Temporada actual", 2015, 2035, season_for(league_key),
+                                     key=f"season_{league_key}",
+                                     help="Año de inicio de la temporada en curso (2026 = 2026/27; en la MLS, el "
+                                          "año natural). Se entrena con esta y la anterior."))
         seed = int(st.number_input("Semilla (simulación)", 0, 10_000, 7)) if source == "Simulada" else 0
         odds_key = af_key = ""
         if source == "Real":
@@ -416,7 +424,7 @@ def main() -> None:
             "2. **Pégala** en la barra lateral (*Clave de The Odds API*) y pulsa **Probar conexión**: no gasta créditos.\n"
             f"3. *(Opcional, de pago)* Una clave de [API-Football]({API_FOOTBALL_SIGNUP}) activa el ajuste por "
             "lesiones. Su plan gratuito solo cubre temporadas antiguas, así que no sirve para la actual.\n\n"
-            "El histórico de la Premier League, La Liga, Serie A, Bundesliga y Liga MX se descarga de "
+            "El histórico de las 10 ligas disponibles se descarga de "
             "football-data.co.uk, sin clave. "
             "Cada liga analizada gasta ~2 créditos de momios (0 si no tiene partidos en los próximos 4 días) y los resultados se guardan en caché 10 minutos.\n\n"
             "**Consejo:** antes de apostar, revisa la pestaña *Backtest* y registra las sugerencias en *Registro* "

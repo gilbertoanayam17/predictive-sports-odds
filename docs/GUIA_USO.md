@@ -37,7 +37,7 @@ En el archivo, escribe tu clave tras `ODDS_API_KEY=` (sin comillas ni espacios) 
 
 ## 2b. Claves y fuentes de datos
 
-Ligas disponibles: **Premier League, La Liga, Serie A, Bundesliga y Liga MX**. Todas tienen histórico gratuito en football-data.co.uk y momios en The Odds API. La Champions League no aparece en la app porque necesitaría API-Football de pago.
+Ligas disponibles: **Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Eredivisie, Championship, Primeira Liga, Liga MX y MLS**. Todas tienen histórico gratuito en football-data.co.uk y momios en The Odds API. La Champions League no aparece en la app porque necesitaría API-Football de pago.
 
 
 | Variable | Obligatoria | Para qué |
