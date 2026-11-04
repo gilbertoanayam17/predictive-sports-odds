@@ -409,4 +409,46 @@ class BetTracker:
                              "bankroll": initial_bankroll + np.cumsum(settled["pnl"].to_numpy(float))})
 
 
-__all__ = ["BetTracker", "Leg", "TrackerError", "parse_selection_code", "selection_code"]
+SQLITE_MAGIC = b"SQLite format 3\x00"
+
+
+def restore_backup(data: bytes, target: str | Path) -> int:
+    """Sustituye el registro por una copia de seguridad, validándola antes.
+
+    La copia se valida en un archivo temporal (cabecera SQLite, tabla ``bets``
+    legible) y solo entonces reemplaza al registro de forma atómica.
+
+    Args:
+        data: Contenido del archivo ``.sqlite`` de respaldo.
+        target: Ruta del registro a reemplazar.
+
+    Returns:
+        Número de apuestas de la copia restaurada.
+
+    Raises:
+        TrackerError: Si el archivo no es un registro válido (el actual no se toca).
+    """
+    if not data.startswith(SQLITE_MAGIC):
+        raise TrackerError("El archivo no es una base de datos SQLite")
+    dest = Path(target)
+    tmp = dest.with_name(dest.name + ".restaurando")
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_bytes(data)
+        conn = sqlite3.connect(tmp)
+        try:
+            count = int(conn.execute("SELECT COUNT(*) FROM bets").fetchone()[0])
+            conn.execute("SELECT id, bet_type, legs, odds, stake, status, pnl, closing_prob FROM bets LIMIT 1")
+        finally:
+            conn.close()
+        tmp.replace(dest)
+    except sqlite3.Error as exc:
+        tmp.unlink(missing_ok=True)
+        raise TrackerError(f"La copia no es un registro de apuestas válido: {exc}") from exc
+    except OSError as exc:
+        tmp.unlink(missing_ok=True)
+        raise TrackerError(f"No se pudo restaurar la copia: {exc}") from exc
+    return count
+
+
+__all__ = ["restore_backup", "BetTracker", "Leg", "TrackerError", "parse_selection_code", "selection_code"]

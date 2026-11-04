@@ -18,12 +18,9 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Instalar dependencias
-        run: pip install -r requirements.txt
-      - name: Instalar dependencias de la UI (solo 3.12)
-        if: matrix.python-version == '3.12'
-        run: pip install -r requirements-ui.txt
+        run: pip install -r requirements-dev.txt
       - name: Errores de código (ruff, reglas pyflakes)
-        run: pip install ruff && ruff check --select F predictive_odds app.py main.py tests
+        run: ruff check --select F predictive_odds app.py main.py tests
       - name: Tipado (mypy)
         run: mypy predictive_odds main.py --ignore-missing-imports
       - name: Tests (pytest)

@@ -1,2 +1,2 @@
+# Compatibilidad: la UI ya está incluida en requirements.txt
 -r requirements.txt
-streamlit>=1.40

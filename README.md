@@ -3,12 +3,12 @@
 Backend en Python que analiza datos de fútbol para detectar **apuestas de valor** y construir **parlays** con gestión de riesgo (Kelly modificado). Cubre Premier League, La Liga, Serie A, Bundesliga y Liga MX, todas con fuentes gratuitas; la arquitectura no depende de ninguna liga ni deporte.
 
 > La reflexión de la Fase 1 (fuentes de datos y features) está en [`docs/fase1_reflexion.md`](docs/fase1_reflexion.md).
-> Guía práctica de operación diaria: [`docs/GUIA_USO.md`](docs/GUIA_USO.md). Progreso autónomo: [`docs/PLAN_AUTOESCALAMIENTO.md`](docs/PLAN_AUTOESCALAMIENTO.md).
+> Guía práctica de operación diaria: [`docs/GUIA_USO.md`](docs/GUIA_USO.md). Usarla desde el celular: [`docs/DESPLIEGUE_CELULAR.md`](docs/DESPLIEGUE_CELULAR.md). Progreso autónomo: [`docs/PLAN_AUTOESCALAMIENTO.md`](docs/PLAN_AUTOESCALAMIENTO.md).
 
 ## Inicio rápido
 
 ```bash
-pip install -e ".[dev]"          # o: pip install -r requirements.txt
+pip install -e ".[dev]"          # o: pip install -r requirements-dev.txt
 predictive-odds --help           # comando instalado (equivale a python main.py)
 python main.py                                  # EPL simulada: no necesita red ni API keys
 python main.py --league LIGA_MX --bankroll 5000

@@ -12,13 +12,14 @@ La app no contiene lógica de negocio: solo llama a la API de
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from dataclasses import replace
 
 import pandas as pd
 import streamlit as st
 
 from predictive_odds.backtester import BacktestConfig, Backtester, BacktestResult
-from predictive_odds.bet_tracker import BetTracker, TrackerError
+from predictive_odds.bet_tracker import BetTracker, TrackerError, restore_backup
 from predictive_odds.config import LEAGUES, ConfigurationError, current_season, get_league, selectable_leagues
 from predictive_odds.connectivity import API_FOOTBALL_SIGNUP, ODDS_API_SIGNUP, check_all
 from predictive_odds.data_fetcher import (
@@ -203,6 +204,49 @@ def study_panel(source: str, seed: int, season: int) -> None:
             st.info("Datos simulados: los perfiles no se guardan. Cambia a *Real* para el estudio de verdad.")
 
 
+SECRET_KEYS = ("ODDS_API_KEY", "API_FOOTBALL_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
+
+
+def backup_panel(db_path: str) -> None:
+    """Copia de seguridad del registro (imprescindible en la nube, donde el disco se borra al reiniciar)."""
+    with st.expander("Copia de seguridad del registro"):
+        st.caption("En Streamlit Community Cloud el disco se borra cuando la app se reinicia: descarga una copia "
+                   "después de registrar o liquidar y restáurala cuando haga falta.")
+        path = Path(db_path)
+        if path.is_file():
+            st.download_button("Descargar copia (.sqlite)", path.read_bytes(), file_name=path.name,
+                               mime="application/octet-stream")
+        uploaded = st.file_uploader("Restaurar desde una copia", type=["sqlite", "db"])
+        if uploaded is not None:
+            confirm = st.checkbox("Entiendo que esto reemplaza el registro actual")
+            if st.button("Restaurar copia", disabled=not confirm):
+                try:
+                    n = restore_backup(uploaded.getvalue(), db_path)
+                    st.success(f"Registro restaurado: {n} apuesta(s).")
+                except TrackerError as exc:
+                    st.error(str(exc))
+
+
+def load_streamlit_secrets() -> list[str]:
+    """Copia a las variables de entorno las claves definidas como *secrets* de Streamlit.
+
+    En Streamlit Community Cloud los secrets se configuran en el panel de la app.
+    Las variables de entorno existentes (p. ej. del ``.env``) tienen prioridad.
+
+    Returns:
+        Nombres de las claves copiadas (nunca sus valores).
+    """
+    loaded = []
+    try:
+        for key in SECRET_KEYS:
+            if not os.environ.get(key) and key in st.secrets:
+                os.environ[key] = str(st.secrets[key])
+                loaded.append(key)
+    except Exception:  # sin archivo de secrets (uso local): no hay nada que cargar
+        return []
+    return loaded
+
+
 def pct(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     """Formatea columnas de probabilidad como porcentaje para mostrar."""
     out = df.copy()
@@ -215,6 +259,7 @@ def pct(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 def main() -> None:
     """Construye la interfaz."""
     load_env()  # claves desde .env (si existe); las variables del sistema tienen prioridad
+    load_streamlit_secrets()  # en Streamlit Community Cloud las claves llegan como secrets
     env_loaded = env_file_keys()  # en cada recarga, no solo la primera
     st.set_page_config(page_title="Predictive Sports Odds", page_icon="⚽", layout="wide")
     st.title("⚽ Predictive Sports Odds")
@@ -235,14 +280,24 @@ def main() -> None:
                        f"[Clave de API-Football (opcional)]({API_FOOTBALL_SIGNUP})")
             if env_loaded:
                 st.caption(f"✓ Cargado desde `.env`: {', '.join(env_loaded)}")
+            elif os.environ.get("ODDS_API_KEY"):
+                st.caption("✓ Clave de momios configurada en el servidor")
             elif not os.environ.get("ODDS_API_KEY"):
                 st.caption("Consejo: guarda tus claves en un archivo `.env` (ver `.env.example`) "
                            "para no tener que pegarlas cada vez.")
-            odds_key = st.text_input("Clave de The Odds API", value=os.environ.get("ODDS_API_KEY", ""),
-                                     type="password", help="Obligatoria. Plan gratuito: 500 créditos/mes")
-            af_key = st.text_input("Clave de API-Football (opcional)", value=os.environ.get("API_FOOTBALL_KEY", ""),
-                                   type="password", help="Activa el ajuste por lesiones. Requiere plan de pago: "
-                                                         "el gratuito no cubre la temporada actual")
+            # Las claves del servidor (.env o secrets de la nube) NUNCA se envían al navegador: el campo queda
+            # vacío y se usa la del servidor salvo que el usuario escriba otra.
+            server_odds = os.environ.get("ODDS_API_KEY", "")
+            server_af = os.environ.get("API_FOOTBALL_KEY", "")
+            typed_odds = st.text_input("Clave de The Odds API", type="password",
+                                       placeholder="Configurada en el servidor" if server_odds else "",
+                                       help="Obligatoria. Plan gratuito: 500 créditos/mes")
+            typed_af = st.text_input("Clave de API-Football (opcional)", type="password",
+                                     placeholder="Configurada en el servidor" if server_af else "",
+                                     help="Activa el ajuste por lesiones. Requiere plan de pago: el gratuito "
+                                          "no cubre la temporada actual")
+            odds_key = typed_odds.strip() or server_odds
+            af_key = typed_af.strip() or server_af
             credits = TheOddsApiProvider.read_credits()
             if credits:
                 st.caption(f"Créditos de momios restantes: **{credits.get('remaining', '?')}** "
@@ -418,6 +473,7 @@ def main() -> None:
                 history = tracker.bankroll_history(bankroll)
                 if not history.empty:
                     st.line_chart(history.reset_index(drop=True)["bankroll"])
+            backup_panel(db_path)
         except TrackerError as exc:
             st.error(f"Registro de apuestas: {exc}")
 
