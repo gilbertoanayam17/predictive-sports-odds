@@ -27,7 +27,7 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 4 | [x] | **Modelo multiliga para UCL**: coeficiente de fuerza por liga, entrenamiento conjunto con varias ligas | La UCL hoy trata a los equipos como de fuerza promedio | — |
 | 5 | [x] | **CI en GitHub Actions**: pytest + mypy en cada push | Calidad continua | — |
 | 6 | [x] | **Registro de apuestas y bankroll** (SQLite): guardar picks, liquidarlos con resultados y llevar el P&L | Seguimiento real del rendimiento | 1 |
-| 7 | [ ] | **App Streamlit** (`app.py`): predicciones, value bets, parlays, backtest y ajustes | Fase de UI | 1, 6 |
+| 7 | [x] | **App Streamlit** (`app.py`): predicciones, value bets, parlays, backtest y ajustes | Fase de UI | 1, 6 |
 | 8 | [ ] | **Proveedor de xG de Understat** (opcional, con caché y tolerancia a fallos) | Mejor señal en ligas top | — |
 
 ## Registro de ejecución
@@ -41,3 +41,4 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 2026-11-04 | #3 Ajuste por lesiones | ver git log | `injuries.py` + `TeamAdjustment` en Poisson/ensamble (ML corregido por razón). Bajas simuladas que las casas descuentan. EV real de los value bets 6.3%→6.5% (20 semillas); en partidos con bajas 5.7%→6.1%. Activado por defecto |
 | 2026-11-04 | #4 Modelo multiliga UCL | ver git log | Coeficiente de liga en Poisson (gradiente verificado numéricamente), simulación coherente entre competiciones, `extra_leagues`/`--extra-leagues`. UCL escasa: error de λ 0.242→0.215 al combinar con la EPL; el coeficiente de liga ayuda si la diferencia entre ligas es grande (0.229→0.220) |
 | 2026-11-04 | #6 Registro de apuestas | ver git log | `bet_tracker.py` (SQLite idempotente, liquidación de sencillas/parlays, anulación, CLV, P&L por mercado, curva de bankroll); CLI `--track`, `--settle`, `--played-rounds`. También corrige una incoherencia de la simulación: las bajas ahora dependen de temporada/jornada y afectan a resultados y momios por igual (efecto de lesiones re-medido: EV 6.2%→6.4%) |
+| 2026-11-04 | #7 App Streamlit | ver git log | `app.py` con 6 pestañas (predicciones, value bets, parlays, tabla/ratings, backtest, registro), memoizada; prueba de humo con AppTest en el CI (3.12) y verificación visual con Playwright |

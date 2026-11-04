@@ -89,19 +89,21 @@ SQLite con restricciones de integridad. Guarda sencillas y parlays (sin duplicar
 - `python main.py --model-path models/epl.joblib` reutiliza los modelos guardados mientras no tengan más de 7 días de antigüedad respecto al último partido, y los guarda al reentrenar (escritura atómica, metadatos en `.json`). Solo se deben cargar bundles propios, porque joblib usa pickle.
 - `ProbabilityCalibrator` (isotónico o Platt, por mercado) se ajusta sobre las selecciones evaluadas fuera de muestra en un backtest. **Está desactivado por defecto:** en la validación simulada no mejoró el Brier (0.2054 → 0.2059–0.2070), porque el modelo ya está bien calibrado. Con datos reales hay que medirlo con `calibration_report(backtest.evaluated)`.
 
-## Conectar una UI (siguiente fase)
+## Interfaz web (Streamlit)
 
-```python
-import streamlit as st
-from predictive_odds.data_fetcher import DataFetcher, SimulatedDataProvider
-from predictive_odds.pipeline import AnalysisPipeline, PipelineConfig
-
-sim = SimulatedDataProvider()
-result = AnalysisPipeline(DataFetcher(sim, odds_provider=sim), PipelineConfig(league_key="EPL")).run()
-st.dataframe(result.predictions_frame())
-st.dataframe(result.value_bets_frame())
-st.dataframe(result.parlays_frame())
+```bash
+pip install -r requirements-ui.txt
+streamlit run app.py
 ```
+
+La barra lateral permite elegir la fuente de datos (simulada o real con `ODDS_API_KEY`), la liga, el bankroll, el ML y los umbrales de valor, parlays y exposición. Pestañas:
+- **Predicciones:** probabilidades por partido, análisis heurístico, ajustes por lesiones y matriz de marcadores.
+- **Value bets** y **Parlays**, con sus stakes.
+- **Tabla y ratings**, más la validación fuera de muestra.
+- **Backtest:** ROI, CLV, curva de bankroll y calibración.
+- **Registro:** guarda las apuestas sugeridas y muestra el P&L.
+
+La app no contiene lógica de negocio: solo llama a `AnalysisPipeline`, `Backtester` y `BetTracker`. Tiene una prueba de humo con `streamlit.testing` que corre en el CI.
 
 ## Limitaciones y próximos pasos
 - Las **lesiones** se convierten en ajustes con una heurística (3% de ataque y 2% de defensa por baja; las dudas cuentan a medias; tope del 15%). Para mejorarlo hacen falta datos de importancia por jugador (`PlayerImpact`), como minutos o goles+asistencias.
