@@ -105,7 +105,7 @@ Validación *rolling origin*: en varios cortes temporales se entrena con el pasa
 SQLite con restricciones de integridad. Guarda sencillas y parlays (sin duplicar si se reejecuta el análisis), liquida cuando hay resultados (un parlay, cuando terminaron todas sus patas), permite anular apuestas, guarda la probabilidad de cierre para el CLV y devuelve el P&L, el ROI por mercado y la curva de bankroll. Solo registra; nunca coloca apuestas.
 
 ### Jornada multiliga (`analyze_slate`, `--leagues`)
-Analiza varias ligas (si una falla, se informa y el resto continúa), junta todos los picks, construye parlays que pueden cruzar ligas y aplica el tope de exposición de forma **global**. `max_singles` / `--max-singles` limita las sencillas a las de mayor EV ajustado.
+Analiza varias ligas (si una falla, se informa y el resto continúa), junta todos los picks, construye parlays que pueden cruzar ligas y aplica el tope de exposición de forma **global**. `max_singles` / `--max-singles` limita las sencillas a las de mayor EV ajustado. `max_match_exposure` limita la exposición de las sencillas de un mismo partido; está desactivado porque en el backtest simulado no redujo el drawdown.
 
 ### Histórico de momios (`odds_history.py`, `--snapshot`)
 Cada ejecución con `--snapshot odds.sqlite` guarda los momios (programar el análisis cada pocas horas construye la serie). `--movement` muestra el movimiento del mejor precio por selección; un acortamiento fuerte suele indicar dinero informado. Con `--track bets.sqlite --settle --snapshot odds.sqlite`, la última captura previa al inicio sirve como **línea de cierre propia**, y así se calcula el CLV de las apuestas reales sin depender de fuentes de terceros.
