@@ -293,29 +293,61 @@ class ValueBetFinder:
         Returns:
             Mapa ``(match_id, selection) -> probabilidad justa``.
         """
-        acc: dict[tuple[str, Selection], list[float]] = {}
         if odds.empty:
             return {}
+        # Implementación vectorizada (numpy): es la parte más costosa del backtest.
+        market = odds["market"].astype(str).to_numpy()
+        outcome = odds["selection"].astype(str).to_numpy()
+        line = pd.to_numeric(odds["line"], errors="coerce").to_numpy(float)
+        price = pd.to_numeric(odds["odds"], errors="coerce").to_numpy(float)
         # En el hándicap asiático las dos caras tienen líneas opuestas (local −0.5 / visitante +0.5):
         # se agrupan por la línea vista desde el local.
-        is_away_ah = (odds["market"] == Market.ASIAN_HANDICAP.value) & (odds["selection"] == "AWAY")
-        line = pd.to_numeric(odds["line"], errors="coerce")
-        df = odds.assign(_line=line.where(~is_away_ah, -line).fillna(-1.0))
-        for (mid, _book, market, _line), grp in df.groupby(["match_id", "bookmaker", "market", "_line"]):
-            size = MARKET_SIZE.get(Market(market))
-            grp = grp.drop_duplicates("selection")
-            if size is None or len(grp) != size:
-                continue
-            try:
-                fair = remove_margin(grp["odds"].tolist(), self.config.devig_method)
-            except ValueError as exc:
-                logger.debug("No se pudo quitar margen en %s: %s", mid, exc)
-                continue
-            for (_, row), p in zip(grp.iterrows(), fair):
-                sel = self._selection(row)
-                if sel is not None:
-                    acc.setdefault((str(mid), sel), []).append(p)
-        return {k: float(np.mean(v)) for k, v in acc.items()}
+        away_ah = (market == Market.ASIAN_HANDICAP.value) & (outcome == "AWAY")
+        line_key = np.where(np.isnan(line), -1.0, np.where(away_ah, -line, line))
+        frame = pd.DataFrame({"mid": odds["match_id"].astype(str).to_numpy(), "book": odds["bookmaker"].astype(str).to_numpy(),
+                              "mkt": market, "lk": line_key, "sel": outcome, "line": line, "odds": price})
+        frame = frame[np.isfinite(frame["odds"].to_numpy()) & (frame["odds"].to_numpy() > 1.0)]
+        frame = frame.drop_duplicates(subset=["mid", "book", "mkt", "lk", "sel"])
+        if frame.empty:
+            return {}
+        codes, _ = pd.factorize(pd.MultiIndex.from_frame(frame[["mid", "book", "mkt", "lk"]]))
+        n_groups = int(codes.max()) + 1
+        sizes = np.bincount(codes, minlength=n_groups)
+        size_by_code = {mk.value: n for mk, n in MARKET_SIZE.items()}
+        expected = frame["mkt"].map(size_by_code).fillna(-1).to_numpy(int)
+        keep = sizes[codes] == expected
+        frame, codes = frame[keep], codes[keep]
+        if frame.empty:
+            return {}
+        implied = 1.0 / frame["odds"].to_numpy(float)
+        total = np.bincount(codes, implied, minlength=n_groups)
+        if self.config.devig_method == "power":
+            lo, hi = np.full(n_groups, 0.2), np.full(n_groups, 5.0)
+            for _ in range(60):  # bisección vectorizada de k: Σ imp^k = 1 (Σ decrece con k)
+                mid = (lo + hi) / 2
+                s_mid = np.bincount(codes, implied ** mid[codes], minlength=n_groups)
+                too_big = s_mid > 1.0
+                lo = np.where(too_big, mid, lo)
+                hi = np.where(too_big, hi, mid)
+            k = (lo + hi) / 2
+            powered = implied ** k[codes]
+            fair = powered / np.bincount(codes, powered, minlength=n_groups)[codes]
+        else:
+            fair = implied / total[codes]
+        frame = frame.assign(fair=fair)
+        cache: dict[tuple[str, str, float], Selection | None] = {}
+        out: dict[tuple[str, Selection], float] = {}
+        for (mid, mkt, sel, ln), p in frame.groupby(["mid", "mkt", "sel", "line"], dropna=False)["fair"].mean().items():
+            key = (str(mkt), str(sel), float(ln))
+            if key not in cache:
+                try:
+                    cache[key] = Selection.from_codes(key[0], key[1], None if np.isnan(key[2]) else key[2])
+                except (ValueError, TypeError):
+                    cache[key] = None
+            selection = cache[key]
+            if selection is not None:
+                out[(str(mid), selection)] = float(p)
+        return out
 
     def evaluate(self, predictions: Mapping[str, MatchPrediction], odds: pd.DataFrame) -> list[Pick]:
         """Evalúa TODAS las selecciones con momio (mejor precio), con o sin valor.
@@ -334,18 +366,27 @@ class ValueBetFinder:
         if df.empty:
             logger.warning("Ningún momio corresponde a partidos con predicción")
             return []
-        df["_sel"] = pd.Series([self._selection(row) for _, row in df.iterrows()], index=df.index, dtype=object)
+        # Una Selection por combinación única (mercado, resultado, línea), no por fila.
+        line = pd.to_numeric(df["line"], errors="coerce")
+        combos: dict[tuple[str, str, float], Selection | None] = {}
+        keys = list(zip(df["market"].astype(str), df["selection"].astype(str), line.fillna(np.nan).to_numpy(float)))
+        for k in set(keys):
+            try:
+                combos[k] = Selection.from_codes(k[0], k[1], None if np.isnan(k[2]) else k[2])
+            except (ValueError, TypeError):
+                combos[k] = None
+        df["_sel"] = pd.Series([combos[k] for k in keys], index=df.index, dtype=object)
         df = df[df["_sel"].notna()]
         best = df.loc[df.groupby(["match_id", "_sel"], sort=False)["odds"].idxmax()]
         picks: list[Pick] = []
-        for _, row in best.iterrows():
-            pred = predictions[row["match_id"]]
-            sel: Selection = row["_sel"]
+        for mid, league, kickoff, bookmaker, price, sel in zip(
+                best["match_id"], best["league"], best["commence_time"], best["bookmaker"], best["odds"], best["_sel"]):
+            pred = predictions[mid]
             p_model = pred.probability(sel)
-            p_market = consensus.get((str(row["match_id"]), sel))
-            pick = Pick(str(row["match_id"]), str(row["league"]), pred.home_team, pred.away_team,
-                        pred.kickoff if pred.kickoff is not None else row["commence_time"], sel,
-                        float(row["odds"]), str(row["bookmaker"]), p_model, p_market,
+            p_market = consensus.get((str(mid), sel))
+            pick = Pick(str(mid), str(league), pred.home_team, pred.away_team,
+                        pred.kickoff if pred.kickoff is not None else kickoff, sel,
+                        float(price), str(bookmaker), p_model, p_market,
                         action_share=pred.action_share(sel))
             pick = replace(pick, decision_prob=self.decision_probability(pick))
             # Kelly con push: f* = s · f*_binario(p_eff) (exacto para ganar/push/perder)

@@ -48,7 +48,7 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 15 | [x] | **Pasada de robustez**: casos límite del pipeline como tests de regresión | Menos sorpresas en producción | — |
 | 16 | [x] | **Jornada multiliga**: analizar varias ligas a la vez y construir parlays con picks de todas, con un tope de exposición global | Más diversificación y combinaciones | — |
 | 17 | [x] | **Operación diaria**: script listo para cron (snapshot + análisis + informe + liquidación) y guía de uso en `docs/` | Usar el sistema día a día | 12, 14 |
-| 18 | [ ] | **Rendimiento del backtest**: reentreno cada N fechas y medición del impacto en las métricas | Backtests más rápidos para iterar | 1 |
+| 18 | [x] | **Rendimiento del backtest**: reentreno cada N fechas y medición del impacto en las métricas | Backtests más rápidos para iterar | 1 |
 
 ## Registro de ejecución
 | Fecha (UTC) | Tarea | Commit | Notas |
@@ -73,3 +73,4 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 2026-11-04 | #15 Robustez | ver git log | 5 regresiones: sin proveedor de momios, temporada terminada, momios corruptos, inicio de temporada (ML y evaluación se desactivan solos), histórico insuficiente |
 | 2026-11-04 | #16 Jornada multiliga | ver git log | `analyze_slate` + `SlateResult` (ligas fallidas → `errors`), parlays entre ligas, tope global, `max_singles`; CLI `--leagues`, `--max-singles`. Detectado: concentración de sencillas correlacionadas en un mismo partido → se mide un tope por partido |
 | 2026-11-04 | #17 Operación diaria | ver git log | `scripts/daily_run.sh` (cron; modo `SIMULATE=1` verificado de punta a punta; reparte el bankroll entre ligas para respetar el tope conjunto) y `docs/GUIA_USO.md` (claves, flujo, lectura de columnas, validación con datos reales, cuotas de API, problemas frecuentes) |
+| 2026-11-04 | #18 Rendimiento | ver git log | Perfilado: `market_consensus` consumía el 73% del tiempo → vectorizado con numpy (bisección vectorizada para el devig *power*; resultados idénticos a 1e-13). Selecciones mapeadas por combinación única y *warm start* de Poisson entre fechas. Backtest de ~56 s (perfilado) / 13 s → 6 s con métricas equivalentes |

@@ -635,7 +635,7 @@ class PoissonModel:
         return self._fitted
 
     def fit(self, matches: pd.DataFrame, reference_date: pd.Timestamp | None = None,
-            team_leagues: Mapping[str, str] | None = None) -> PoissonModel:
+            team_leagues: Mapping[str, str] | None = None, warm_start: PoissonModel | None = None) -> PoissonModel:
         """Entrena el modelo.
 
         Modo multiliga: si se pasa ``team_leagues`` (equipo → liga doméstica),
@@ -649,6 +649,8 @@ class PoissonModel:
             reference_date: Fecha respecto a la cual se calcula el decaimiento
                 (por defecto, el último partido).
             team_leagues: Liga doméstica de cada equipo (opcional).
+            warm_start: Modelo previo cuyos parámetros sirven de punto de partida
+                (mismo óptimo, menos iteraciones; útil al reentrenar fecha a fecha).
 
         Returns:
             ``self``.
@@ -708,6 +710,11 @@ class PoissonModel:
         theta0 = np.zeros(2 + 2 * n + nl)
         theta0[0] = float(np.log(max(float(np.mean(np.r_[yh, ya])), 0.1)))
         theta0[1] = 0.2
+        if warm_start is not None and warm_start.is_fitted and not nl:
+            theta0[0], theta0[1] = warm_start.mu, warm_start.home_adv
+            for t, i in idx.items():
+                theta0[2 + i] = warm_start.attack.get(t, 0.0)
+                theta0[2 + n + i] = warm_start.defense.get(t, 0.0)
         res = minimize(nll, theta0, jac=True, method="L-BFGS-B")
         if not np.all(np.isfinite(res.x)):
             raise RuntimeError(f"El ajuste de Poisson no convergió: {res.message}")

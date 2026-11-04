@@ -192,11 +192,13 @@ class Backtester:
         self.pre_odds = odds[~is_closing]
         self.closing_odds = odds[is_closing]
         self._closing_fair = ValueBetFinder(self.config.value).market_consensus(self.closing_odds)
+        self._last_poisson: PoissonModel | None = None
 
     def _fit(self, train: pd.DataFrame, features: pd.DataFrame) -> EnsemblePredictor:
         """Entrena los modelos con los partidos de entrenamiento."""
         c = self.config
-        poisson_model = PoissonModel(c.poisson).fit(train)
+        poisson_model = PoissonModel(c.poisson).fit(train, warm_start=self._last_poisson)
+        self._last_poisson = poisson_model
         ml: MLOutcomeModel | None = None
         if c.use_ml:
             try:
