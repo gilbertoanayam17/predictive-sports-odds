@@ -39,7 +39,7 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 11 | [x] | **Simulador de riesgo Monte Carlo**: distribución de bankroll, drawdown y riesgo de ruina según la fracción de Kelly y el tope de exposición | Elegir el staking con datos | 1 |
 | 12 | [x] | **Informe diario exportable** (Markdown/HTML) con picks, parlays, stakes y avisos | Consumo fácil fuera de la terminal | — |
 | 13 | [x] | **Mercados extra**: Draw No Bet y hándicap asiático (con push/medio push) | Más oportunidades de valor | — |
-| 14 | [ ] | **Histórico de momios** (snapshots en SQLite) para medir el movimiento de línea y el CLV en vivo | CLV real sin depender del cierre de terceros | 6 |
+| 14 | [x] | **Histórico de momios** (snapshots en SQLite) para medir el movimiento de línea y el CLV en vivo | CLV real sin depender del cierre de terceros | 6 |
 
 ## Registro de ejecución
 | Fecha (UTC) | Tarea | Commit | Notas |
@@ -60,3 +60,4 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 2026-11-04 | #11 Riesgo Monte Carlo | ver git log | `risk.py` + `--risk`: fracción de Kelly × recorte del edge. Con ¼ de Kelly y el 10% de exposición, P(ruina) = 0% incluso con el modelo en contra; con Kelly completo, ≈36% → respalda los valores por defecto |
 | 2026-11-04 | #12 Informe exportable | ver git log | `report.py` + `--report archivo.md/.html`: HTML autocontenido (sin recursos externos, modo claro/oscuro, nombres escapados); verificado en móvil (390 px, sin desbordamiento horizontal) |
 | 2026-11-04 | #13 DNB y hándicap asiático | ver git log | Rejilla de resultados graduados, `p_eff`/`action_share` (EV exacto, Kelly exacto con push), liquidación con push y medios resultados en backtest y registro, emparejamiento de las caras del hándicap al quitar el margen; Odds API `spreads`, columnas AH de football-data (+ cierre), simulación. Excluidos de parlays. 21 tests nuevos. Backtest simulado: hándicap asiático con ROI +11%, CLV +6% |
+| 2026-11-04 | #14 Histórico de momios | ver git log | `odds_history.py`: snapshots SQLite, movimiento del mejor precio, cierre propio (última captura pre-partido; ignora capturas en juego y la pseudo-casa de cierre) que alimenta el CLV del registro. CLI `--snapshot`, `--movement` |

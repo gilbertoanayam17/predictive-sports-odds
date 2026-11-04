@@ -39,6 +39,7 @@ from predictive_odds.backtester import BacktestConfig, Backtester, BacktestResul
 from predictive_odds.parlay_builder import ParlayConfig
 from predictive_odds.xg_sources import UnderstatProvider, XgEnrichedProvider
 from predictive_odds.statistical_models import InsufficientDataError
+from predictive_odds.odds_history import OddsHistory, OddsHistoryError
 from predictive_odds.report import save_report
 from predictive_odds.risk import RiskConfig, risk_table
 from predictive_odds.tuning import tune_ml_weight, tune_poisson
@@ -284,6 +285,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--model-path", default=None, help="Bundle .joblib: reutiliza modelos guardados y guarda al reentrenar")
     p.add_argument("--track", default=None, help="Registro SQLite: guarda las apuestas sugeridas del análisis")
     p.add_argument("--settle", action="store_true", help="Con --track: liquida pendientes y muestra el rendimiento")
+    p.add_argument("--snapshot", default=None,
+                   help="SQLite de histórico de momios: guarda una captura (y con --settle aporta el cierre propio)")
+    p.add_argument("--movement", action="store_true", help="Con --snapshot: muestra el movimiento de línea")
     p.add_argument("--report", default=None, help="Exportar el análisis a un archivo .md o .html")
     p.add_argument("--risk", action="store_true", help="Añadir simulación Monte Carlo de riesgo del bankroll")
     p.add_argument("--risk-rounds", type=int, default=38, help="Jornadas a simular en --risk")
@@ -342,6 +346,18 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, ValueError) as exc:
             print(f"No se pudo guardar el informe: {exc}", file=sys.stderr)
             return 7
+    if args.snapshot:
+        try:
+            with OddsHistory(args.snapshot) as hist:
+                n = hist.save_snapshot(result.odds)
+                print(f"\nSnapshot de momios guardado en {args.snapshot} ({n} filas).")
+                if args.movement:
+                    section("MOVIMIENTO DE LÍNEA (mejor precio; negativo = el momio se acortó)")
+                    show(hist.line_movement(list(result.predictions)).head(20).round(3),
+                         "(se necesitan al menos dos capturas)")
+        except OddsHistoryError as exc:
+            print(f"Error en el histórico de momios: {exc}", file=sys.stderr)
+            return 8
     if args.track:
         try:
             with BetTracker(args.track) as tracker:
@@ -367,13 +383,16 @@ def run_tracker(args: argparse.Namespace) -> int:
         fetcher = build_fetcher(args)
         results = fetcher.history_provider.fetch_matches(league, args.season)
         with BetTracker(args.track) as tracker:
+            if args.snapshot:
+                with OddsHistory(args.snapshot) as hist:
+                    print(f"Cierre propio aplicado a {tracker.update_closing(hist.closing_odds())} apuesta(s)")
             settled = tracker.settle(results)
             section(f"REGISTRO DE APUESTAS — {args.track}")
             print(f"Liquidadas ahora: {settled}")
             for k, v in tracker.summary(initial_bankroll=args.bankroll).items():
                 print(f"  {k:<20} {v:>12,.4f}")
             show(tracker.by_market().round(3), "(sin apuestas liquidadas)")
-    except (ConfigurationError, DataFetchError, TrackerError) as exc:
+    except (ConfigurationError, DataFetchError, TrackerError, OddsHistoryError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 6
     return 0

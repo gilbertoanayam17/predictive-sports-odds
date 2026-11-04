@@ -45,6 +45,7 @@ predictive_odds/
 ├── tuning.py              # Ajuste de hiperparámetros con validación cronológica
 ├── risk.py                # Monte Carlo del bankroll: ruina, drawdown, fracción de Kelly
 ├── report.py              # Informe exportable en Markdown o HTML autocontenido
+├── odds_history.py        # Snapshots de momios: movimiento de línea y cierre propio para CLV
 └── pipeline.py            # AnalysisPipeline.run() → AnalysisResult (DataFrames listos para UI)
 ├── cli.py                 # CLI (también como comando `predictive-odds`)
 main.py                    # Demo de punta a punta en la terminal (envoltorio del CLI)
@@ -100,6 +101,9 @@ Validación *rolling origin*: en varios cortes temporales se entrena con el pasa
 
 ### Registro de apuestas (`bet_tracker.py`)
 SQLite con restricciones de integridad. Guarda sencillas y parlays (sin duplicar si se reejecuta el análisis), liquida cuando hay resultados (un parlay, cuando terminaron todas sus patas), permite anular apuestas, guarda la probabilidad de cierre para el CLV y devuelve el P&L, el ROI por mercado y la curva de bankroll. Solo registra; nunca coloca apuestas.
+
+### Histórico de momios (`odds_history.py`, `--snapshot`)
+Cada ejecución con `--snapshot odds.sqlite` guarda los momios (programar el análisis cada pocas horas construye la serie). `--movement` muestra el movimiento del mejor precio por selección; un acortamiento fuerte suele indicar dinero informado. Con `--track bets.sqlite --settle --snapshot odds.sqlite`, la última captura previa al inicio sirve como **línea de cierre propia**, y así se calcula el CLV de las apuestas reales sin depender de fuentes de terceros.
 
 ### Calibración y persistencia
 - `python main.py --model-path models/epl.joblib` reutiliza los modelos guardados mientras no tengan más de 7 días de antigüedad respecto al último partido, y los guarda al reentrenar (escritura atómica, metadatos en `.json`). Solo se deben cargar bundles propios, porque joblib usa pickle.

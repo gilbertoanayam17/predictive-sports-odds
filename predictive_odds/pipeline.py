@@ -108,6 +108,7 @@ class AnalysisResult:
         evaluation: Métricas de validación fuera de muestra por modelo.
         team_ratings: Ratings del modelo de Poisson.
         adjustments: Ajustes por lesiones aplicados (equipo → ajuste).
+        odds: Momios usados (enlazados a los partidos), p. ej. para guardar snapshots.
     """
 
     league: str
@@ -122,6 +123,7 @@ class AnalysisResult:
     evaluation: dict[str, dict[str, float]]
     team_ratings: pd.DataFrame
     adjustments: dict[str, TeamAdjustment] = field(default_factory=dict)
+    odds: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     def predictions_frame(self) -> pd.DataFrame:
         """Tabla de predicciones por partido."""
@@ -370,4 +372,5 @@ class AnalysisPipeline:
             predictions=predictions, reports=reports, all_picks=all_picks, value_bets=value_bets,
             parlays=parlays, evaluation=self.evaluate_models(history) if evaluate else {},
             team_ratings=ratings[ratings["team"].isin(set(known))].reset_index(drop=True), adjustments=adjustments,
+            odds=odds,
         )
