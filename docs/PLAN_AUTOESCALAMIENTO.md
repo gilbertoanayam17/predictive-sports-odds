@@ -64,7 +64,7 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 21 | [x] | **Ahorro de créditos de The Odds API**: endpoint gratuito de eventos antes de pedir momios, horizonte de partidos, 1 región por defecto, contador de créditos | Rinde más el plan gratuito |
 | 22 | [x] | **Estudio por liga y mercado**: backtest multi-temporada → configuración recomendada por liga que la app aplica | Apostar solo donde hay ventaja |
 | 23 | [x] | **Panel de rendimiento real**: CLV/ROI por liga y mercado, real vs esperado, rachas | Saber si se gana por habilidad o por suerte |
-| 24 | [ ] | **Alertas por Telegram** de value bets con EV alto (tarea programada de Windows) | Avisos en el celular |
+| 24 | [x] | **Alertas por Telegram** de value bets con EV alto (tarea programada de Windows) | Avisos en el celular |
 | 25 | [ ] | **Revisión de código y limpieza**: auditoría de errores y división de `app.py` | Menos errores silenciosos |
 | 26 | [ ] | **App en el celular**: preparación para Streamlit Community Cloud con *secrets* | Uso desde cualquier lugar |
 
@@ -104,3 +104,4 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 2026-11-04 | #21 Ahorro de créditos | ver git log | `/events` gratuito antes de `/odds`: 0 créditos si no hay partidos en 96 h; región única `eu` (2 créditos por liga en vez de 4); horizonte redondeado a la hora para que acierte la caché; créditos restantes persistidos y visibles en la app. 4 tests sin red |
 | 2026-11-04 | #22 Estudio por liga | ver git log | `league_study.py`: backtest multi-temporada por liga → estadísticas por mercado → veredicto por CLV (ROI con el doble de muestra si el CLV no es comparable, p. ej. Liga MX) → `league_profiles.json`, aplicado automáticamente (`ValueBetConfig.allowed_markets`, también en parlays). CLI `--study`, panel en la app. Los tests corren en una carpeta temporal para no tocar archivos del usuario |
 | 2026-11-04 | #23 Panel de rendimiento | ver git log | `performance.py` (funciones puras): beneficio real vs esperado según el cierre (si no, según el modelo), suerte en desviaciones típicas, veredicto, rachas, desglose por liga/mercado y curva acumulada; pestaña *Rendimiento* en la app |
+| 2026-11-04 | #24 Alertas Telegram | ver git log | `notifier.py`: cliente propio (el token nunca aparece en errores, verificado por test), avisos sin repetir, mensajes HTML escapados y partidos en varios mensajes si son largos; CLI `--alert`, `--alert-min-ev`, `--telegram-setup` (encuentra el chat_id); `scripts/alertas_windows.ps1` para el Programador de tareas (por defecto cada 24 h ≈ 300 créditos/mes). El script .ps1 NO se pudo probar aquí (sin PowerShell) |

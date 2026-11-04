@@ -80,6 +80,19 @@ SIMULATE=1 TRACK=1 scripts/daily_run.sh EPL LIGA_MX        # ensayo sin red ni c
 
 El `BANKROLL` del script se reparte entre las ligas, para que la exposición conjunta no supere el tope. **Cuota de The Odds API:** cada llamada a momios cuesta *mercados × regiones* créditos: con la configuración por defecto (`h2h,totals` × `eu`) son **2**. Antes se consulta el endpoint gratuito de eventos, y si la liga no tiene partidos en las próximas 96 horas no se gasta nada. Una liga cada 6 horas gasta como mucho ≈ 240 créditos al mes; en la práctica menos, por los parones. La barra lateral de la app muestra los créditos restantes.
 
+### Alertas por Telegram
+
+1. En Telegram, abre **@BotFather**, envía `/newbot` y copia el *token*.
+2. Escribe cualquier mensaje a tu bot nuevo.
+3. Añade `TELEGRAM_BOT_TOKEN=el_token` a tu `.env` y ejecuta `python main.py --telegram-setup`. El comando encuentra tu `chat_id`, te dice qué línea añadir al `.env` y te manda un mensaje de prueba.
+4. Programa el análisis diario con avisos (desde la carpeta del proyecto, en PowerShell):
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File scripts\alertas_windows.ps1
+   ```
+   Crea la tarea *PredictiveSportsOdds-Alertas* (cada 24 h, 5 ligas, ≈300 créditos al mes) y guarda la salida en `data\alertas.log`. Opciones: `-Horas 12`, `-Ligas "EPL LA_LIGA"`, `-EvMinimo 0.06`; para quitarla, `-Quitar`.
+
+Solo se avisan los value bets **nuevos** con EV ajustado ≥ 5%; el mismo pick nunca se manda dos veces. El token no aparece en errores ni registros. También puedes avisar a mano: `python main.py --live --leagues EPL LA_LIGA --alert`.
+
 ## 4. Cómo leer los resultados
 
 | Columna | Significado |

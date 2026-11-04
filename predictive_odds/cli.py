@@ -36,11 +36,12 @@ from predictive_odds.data_fetcher import (
 )
 from predictive_odds.bet_tracker import BetTracker, TrackerError
 from predictive_odds.backtester import BacktestConfig, Backtester, BacktestResult
-from predictive_odds.parlay_builder import ParlayConfig
+from predictive_odds.parlay_builder import ParlayConfig, Pick
 from predictive_odds.xg_sources import UnderstatProvider, XgEnrichedProvider
 from predictive_odds.statistical_models import InsufficientDataError
 from predictive_odds.odds_history import OddsHistory, OddsHistoryError
 from predictive_odds.league_study import StudyConfig, run_study, save_profiles, study_frame
+from predictive_odds.notifier import NotifierError, TelegramNotifier, notify_value_bets
 from predictive_odds.report import save_report
 from predictive_odds.risk import RiskConfig, risk_table
 from predictive_odds.settings import load_env
@@ -165,6 +166,56 @@ def run_tuning(args: argparse.Namespace) -> None:
         except InsufficientDataError as exc:
             print(f"Omitido: {exc}")
     print("\nCambia los valores por defecto solo si la mejora es consistente sobre datos REALES.")
+
+
+def send_alerts(picks: list[Pick], bankroll: float, title: str, min_edge: float) -> int:
+    """Envía por Telegram los value bets nuevos; devuelve un código de salida (0 = bien).
+
+    Args:
+        picks: Sencillas de valor.
+        bankroll: Bankroll para el stake en dinero.
+        title: Encabezado del aviso.
+        min_edge: EV ajustado mínimo.
+    """
+    notifier = TelegramNotifier.from_env()
+    if notifier is None:
+        print("Alertas: falta TELEGRAM_BOT_TOKEN en el .env (ver --telegram-setup).", file=sys.stderr)
+        return 9
+    try:
+        sent = notify_value_bets(notifier, picks, bankroll, title, min_edge)
+    except NotifierError as exc:
+        print(f"Alertas: {exc}", file=sys.stderr)
+        return 9
+    print(f"\nTelegram: {sent} aviso(s) nuevo(s) enviado(s)." if sent
+          else f"\nTelegram: nada nuevo con EV ajustado ≥ {min_edge:.0%}.")
+    return 0
+
+
+def telegram_setup() -> int:
+    """Asistente: valida el token, encuentra el chat_id y envía un mensaje de prueba."""
+    section("CONFIGURACIÓN DE TELEGRAM")
+    notifier = TelegramNotifier.from_env()
+    if notifier is None:
+        print("1. En Telegram, abre @BotFather y envía /newbot; copia el token que te da.\n"
+              "2. Añade a tu .env la línea  TELEGRAM_BOT_TOKEN=el_token\n"
+              "3. Escribe cualquier mensaje a tu bot y vuelve a ejecutar:  python main.py --telegram-setup")
+        return 9
+    try:
+        print(f"Bot: @{notifier.bot_name()} (token válido)")
+        if not notifier.chat_id:
+            chats = notifier.discover_chat_ids()
+            if not chats:
+                print("No encuentro chats: escribe cualquier mensaje a tu bot y repite el comando.")
+                return 9
+            for chat_id, name in chats:
+                print(f"Chat encontrado: {name or '(sin nombre)'} → añade a tu .env:  TELEGRAM_CHAT_ID={chat_id}")
+            notifier.chat_id = chats[0][0]
+        notifier.send("✅ <b>Predictive Sports Odds</b>: las alertas de Telegram funcionan.")
+        print("Mensaje de prueba enviado. Revisa Telegram.")
+    except NotifierError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 9
+    return 0
 
 
 def run_league_study(args: argparse.Namespace) -> None:
@@ -355,6 +406,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--report", default=None, help="Exportar el análisis a un archivo .md o .html")
     p.add_argument("--risk", action="store_true", help="Añadir simulación Monte Carlo de riesgo del bankroll")
     p.add_argument("--risk-rounds", type=int, default=38, help="Jornadas a simular en --risk")
+    p.add_argument("--alert", action="store_true",
+                   help="Enviar por Telegram los value bets nuevos (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID en .env)")
+    p.add_argument("--alert-min-ev", type=float, default=0.05, help="EV ajustado mínimo para avisar (0.05 = 5%%)")
+    p.add_argument("--telegram-setup", action="store_true",
+                   help="Comprueba el bot de Telegram, encuentra tu chat_id y envía un mensaje de prueba")
     p.add_argument("--study", action="store_true",
                    help="Estudio por liga y mercado (backtest multi-temporada) y perfiles recomendados")
     p.add_argument("--study-seasons", type=int, default=3, help="Temporadas anteriores incluidas en --study")
@@ -371,6 +427,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
+    if args.telegram_setup:
+        return telegram_setup()
     if args.settle:
         if not args.track:
             print("--settle requiere --track <archivo.sqlite>", file=sys.stderr)
@@ -392,7 +450,11 @@ def main(argv: list[str] | None = None) -> int:
             slate_cfg = PipelineConfig(seasons=(args.season - 1, args.season), bankroll=args.bankroll,
                                        use_ml=not args.no_ml, max_singles=args.max_singles,
                                        parlay=ParlayConfig(allow_same_match=args.same_match))
-            print_slate(analyze_slate(fetcher, [k.upper() for k in args.leagues], slate_cfg), not args.live)
+            slate = analyze_slate(fetcher, [k.upper() for k in args.leagues], slate_cfg)
+            print_slate(slate, not args.live)
+            if args.alert:
+                return send_alerts(slate.value_bets, args.bankroll, "Jornada " + ", ".join(slate.results),
+                                   args.alert_min_ev)
             return 0
         config = PipelineConfig(
             league_key=league.key, seasons=(args.season - 1, args.season), bankroll=args.bankroll,
@@ -415,6 +477,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Datos insuficientes: {exc}", file=sys.stderr)
         return 5
     print_report(result, simulated=not args.live)
+    if args.alert:
+        code = send_alerts(result.value_bets, result.bankroll, get_league(result.league).name, args.alert_min_ev)
+        if code:
+            return code
     if args.risk:
         print_risk(result, args.risk_rounds)
     if args.report:
