@@ -32,7 +32,7 @@ from predictive_odds.data_fetcher import (
     SimulationConfig,
     TheOddsApiProvider,
 )
-from predictive_odds.parlay_builder import ParlayConfig, ValueBetConfig
+from predictive_odds.parlay_builder import ParlayConfig, ValueBetConfig, ValueBetFinder
 from predictive_odds import ui_html as ui
 from predictive_odds.domain import MatchPrediction
 from predictive_odds.performance import breakdown, cumulative, summarize
@@ -219,11 +219,11 @@ def backup_panel(db_path: str) -> None:
         path = Path(db_path)
         if path.is_file():
             st.download_button("Descargar copia (.sqlite)", path.read_bytes(), file_name=path.name,
-                               mime="application/octet-stream")
-        uploaded = st.file_uploader("Restaurar desde una copia", type=["sqlite", "db"])
+                               mime="application/octet-stream", key=f"dl_{db_path}")
+        uploaded = st.file_uploader("Restaurar desde una copia", type=["sqlite", "db"], key=f"up_{db_path}")
         if uploaded is not None:
-            confirm = st.checkbox("Entiendo que esto reemplaza el registro actual")
-            if st.button("Restaurar copia", disabled=not confirm):
+            confirm = st.checkbox("Entiendo que esto reemplaza el registro actual", key=f"ok_{db_path}")
+            if st.button("Restaurar copia", disabled=not confirm, key=f"restore_{db_path}"):
                 try:
                     n = restore_backup(uploaded.getvalue(), db_path)
                     st.success(f"Registro restaurado: {n} apuesta(s).")
@@ -394,7 +394,12 @@ def main() -> None:
         min_leg_prob = st.slider("Probabilidad mínima por pata", 0.4, 0.8, 0.55, 0.01)
         same_match = st.toggle("Permitir patas del mismo partido", value=False)
         exposure = st.slider("Exposición máxima del bankroll", 0.02, 0.3, 0.10, 0.01)
-        db_path = st.text_input("Registro de apuestas (SQLite)", "bets.sqlite")
+        db_path = st.text_input("Registro de apuestas (SQLite)", "bets.sqlite",
+                                help="Sugerencias registradas (seguimiento / paper trading)")
+        real_db_path = st.text_input("Mis apuestas reales (SQLite)", "mis_apuestas.sqlite",
+                                     help="Lo que realmente apostaste, con el momio y el monto que tomaste")
+        my_book = st.text_input("Tu casa de apuestas", os.environ.get("MI_CASA", "Caliente"),
+                                help="Casa sin momios automáticos: la app te dice el momio mínimo para que haya valor")
         st.header("Informe")
         report_slot = st.empty()
 
@@ -453,7 +458,7 @@ def main() -> None:
                            file_name=f"informe_{league_key}.md", mime="text/markdown")
 
     tabs = st.tabs(["Predicciones", "Value bets", "Parlays", "Tabla y ratings", "Backtest", "Registro",
-                    "Riesgo", "Multiliga", "Rendimiento"])
+                    "Riesgo", "Multiliga", "Rendimiento", "Mis apuestas"])
 
     with tabs[0]:
         counts = ui.value_counts(result.value_bets)
@@ -490,7 +495,7 @@ def main() -> None:
         else:
             st.markdown('<p class="note">Ordenadas por EV ajustado (modelo encogido hacia el mercado). El stake ya '
                         'incluye Kelly modificado y el tope de exposición.</p>', unsafe_allow_html=True)
-            st.markdown(ui.grid(ui.pick_ticket(p, result.bankroll) for p in result.value_bets),
+            st.markdown(ui.grid(ui.pick_ticket(p, result.bankroll, my_book, min_edge) for p in result.value_bets),
                         unsafe_allow_html=True)
             with st.expander("Ver como tabla"):
                 st.dataframe(pct(vb, ["p_modelo", "p_implícita", "p_mercado", "EV_modelo", "EV_ajustado"]),
@@ -596,7 +601,79 @@ def main() -> None:
                              hide_index=True, use_container_width=True)
 
     with tabs[8]:
-        performance_panel(db_path)
+        which = st.radio("Registro", ["Mis apuestas reales", "Sugerencias"], horizontal=True,
+                         key="perf_registry")
+        performance_panel(real_db_path if which == "Mis apuestas reales" else db_path)
+
+    with tabs[9]:
+        my_bets_panel(result, real_db_path, my_book or "Mi casa", min_edge, value_weight, bankroll,
+                      source, seed, league_key, season, odds_key, af_key)
+
+
+def my_bets_panel(result: AnalysisResult, real_db_path: str, my_book: str, min_edge: float, value_weight: float,
+                  bankroll: float, source: str, seed: int, league_key: str, season: int, odds_key: str,
+                  af_key: str) -> None:
+    """Momios mínimos para tu casa y registro de las apuestas que realmente hiciste."""
+    st.subheader(f"Momios mínimos en {my_book}")
+    st.caption(f"Si {my_book} paga **igual o más** que el momio mínimo, la selección tiene valor (EV ajustado ≥ "
+               f"{min_edge:.0%}). Se calcula con la probabilidad del modelo encogida hacia el mercado.")
+    candidates = sorted((p for p in result.all_picks if 0.12 <= (p.decision_prob or p.model_prob) <= 0.92),
+                        key=lambda p: (p.kickoff is None, str(p.kickoff), p.fixture, p.minimum_odds(min_edge)))
+    if not candidates:
+        st.info("No hay selecciones con momios de referencia en esta jornada.")
+        return
+    table = pd.DataFrame([{"partido": p.fixture, "selección": p.selection.label,
+                           "momio mínimo": round(p.minimum_odds(min_edge), 2),
+                           "mejor momio visto": p.odds, "casa": p.bookmaker,
+                           "prob. (modelo+mercado)": round(100 * (p.decision_prob or p.model_prob), 1)}
+                          for p in candidates])
+    match = st.selectbox("Partido", ["Todos"] + list(dict.fromkeys(table["partido"])), key="min_match")
+    view = table if match == "Todos" else table[table["partido"] == match]
+    st.dataframe(view, hide_index=True, use_container_width=True)
+
+    st.subheader("Registrar una apuesta real")
+    labels = {i: f"{p.fixture} · {p.selection.label} (mín. {p.minimum_odds(min_edge):.2f})"
+              for i, p in enumerate(candidates)}
+    idx = st.selectbox("Selección", list(labels), format_func=labels.__getitem__, key="real_pick")
+    pick = candidates[idx]
+    c1, c2 = st.columns(2)
+    taken = c1.number_input(f"Momio que tomaste en {my_book}", min_value=1.01, max_value=100.0,
+                            value=float(round(max(pick.minimum_odds(min_edge), 1.01), 2)), step=0.05,
+                            key="real_odds")
+    finder = ValueBetFinder(replace(ValueBetConfig(), min_edge=min_edge, value_model_weight=value_weight))
+    priced = finder.reprice(pick, taken, my_book)
+    suggested = round(priced.stake_fraction * bankroll, 2)
+    amount = c2.number_input("Monto apostado", min_value=0.0, value=float(suggested), step=10.0, key="real_amount",
+                             help=f"Stake sugerido por Kelly modificado: {suggested:,.2f}")
+    if priced.adjusted_edge >= min_edge:
+        st.success(f"Con {taken:.2f} hay valor: EV ajustado {priced.adjusted_edge:+.1%}.")
+    else:
+        st.warning(f"Con {taken:.2f} NO hay valor (EV ajustado {priced.adjusted_edge:+.1%}; mínimo "
+                   f"{pick.minimum_odds(min_edge):.2f}). Puedes registrarla igualmente.")
+    try:
+        with BetTracker(real_db_path) as tracker:
+            if st.button("Guardar apuesta real", type="primary", disabled=amount <= 0):
+                new = tracker.record_pick(priced, amount)
+                if new is None:
+                    st.info("Esa apuesta ya estaba registrada.")
+                else:
+                    st.success(f"Guardada en {Path(real_db_path).name}.")
+            if st.button("Liquidar mis apuestas con resultados", key="settle_real"):
+                try:
+                    with st.spinner("Descargando resultados…"):
+                        n = settle_pending(tracker, source, seed, league_key, season, odds_key, af_key)
+                    if n:
+                        st.success(f"{n} apuesta(s) liquidada(s).")
+                    else:
+                        st.info("Nada que liquidar todavía (los resultados tardan 1-2 días en publicarse).")
+                except (DataFetchError, AuthenticationError) as exc:
+                    st.error(f"No se pudieron obtener resultados: {exc}")
+            bets = tracker.bets()
+            if not bets.empty:
+                st.dataframe(bets.drop(columns=["bet_key", "legs"]), hide_index=True, use_container_width=True)
+        backup_panel(real_db_path)
+    except TrackerError as exc:
+        st.error(f"Mis apuestas: {exc}")
 
 
 def performance_panel(db_path: str) -> None:

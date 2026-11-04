@@ -42,7 +42,7 @@ def test_server_key_never_sent_to_browser(monkeypatch: pytest.MonkeyPatch, offli
     monkeypatch.setenv("ODDS_API_KEY", SECRET)
     at = AppTest.from_file(APP, default_timeout=180)
     at.run()
-    at.radio[0].set_value("Real").run()
+    next(r for r in at.radio if r.label == "Fuente").set_value("Real").run()
     assert not at.exception, at.exception
     key_input = next(t for t in at.text_input if t.label == "Clave de The Odds API")
     assert key_input.value == "" and SECRET not in _all_text(at)
@@ -54,7 +54,7 @@ def test_streamlit_secrets_are_loaded(offline_real_mode: None) -> None:
     at = AppTest.from_file(APP, default_timeout=180)
     at.secrets["ODDS_API_KEY"] = SECRET
     at.run()
-    at.radio[0].set_value("Real").run()
+    next(r for r in at.radio if r.label == "Fuente").set_value("Real").run()
     assert not at.exception, at.exception
     assert os.environ.get("ODDS_API_KEY") == SECRET  # disponible para el servidor
     assert SECRET not in _all_text(at)

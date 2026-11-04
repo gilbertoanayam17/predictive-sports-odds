@@ -17,7 +17,7 @@ def test_app_renders_and_registers_bets(tmp_path: Path) -> None:
     at.run()
     assert not at.exception, at.exception
     assert [m.label for m in at.metric][:3] == ["Partidos analizados", "Value bets", "Parlays"]
-    assert len(at.tabs) == 9
+    assert len(at.tabs) == 10
 
     at.text_input[0].set_value(str(tmp_path / "bets.sqlite")).run()  # ruta del registro
     register = next(b for b in at.button if b.label == "Registrar las apuestas sugeridas")
@@ -41,7 +41,7 @@ def test_app_real_mode_without_key_shows_onboarding(monkeypatch: pytest.MonkeyPa
     monkeypatch.delenv("ODDS_API_KEY", raising=False)
     at = AppTest.from_file(APP, default_timeout=120)
     at.run()
-    at.radio[0].set_value("Real").run()
+    next(r for r in at.radio if r.label == "Fuente").set_value("Real").run()
     assert not at.exception, at.exception
     assert any("Cómo usar datos reales" in i.value for i in at.info)
     assert any(b.label == "Probar conexión" for b in at.button)
@@ -68,7 +68,7 @@ def test_app_connection_button_without_network(monkeypatch: pytest.MonkeyPatch) 
         conn.ConnectionCheck("C", False, "opcional", required=False)])
     at = AppTest.from_file(APP, default_timeout=120)
     at.run()
-    at.radio[0].set_value("Real").run()
+    next(r for r in at.radio if r.label == "Fuente").set_value("Real").run()
     next(b for b in at.button if b.label == "Probar conexión").click().run()
     assert not at.exception, at.exception
 
@@ -101,5 +101,25 @@ def test_app_performance_tab_with_settled_bets(tmp_path: Path) -> None:
     at = AppTest.from_file(APP, default_timeout=120)
     at.run()
     at.text_input[0].set_value(str(db)).run()
+    next(r for r in at.radio if r.label == "Registro").set_value("Sugerencias").run()
     assert not at.exception, at.exception
     assert any(m.label == "Beneficio esperado" for m in at.metric)
+
+
+def test_app_register_real_bet_at_caliente(tmp_path: Path) -> None:
+    from predictive_odds.bet_tracker import BetTracker
+
+    real = tmp_path / "reales.sqlite"
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.run()
+    next(t for t in at.text_input if t.label == "Mis apuestas reales (SQLite)").set_value(str(real)).run()
+    assert any("Momios mínimos en Caliente" in h.value for h in at.subheader)
+    next(n for n in at.number_input if n.label.startswith("Momio que tomaste")).set_value(9.5).run()
+    next(n for n in at.number_input if n.label == "Monto apostado").set_value(25.0).run()
+    assert any("hay valor" in s.value for s in at.success)
+    next(b for b in at.button if b.label == "Guardar apuesta real").click().run()
+    assert not at.exception, at.exception
+    with BetTracker(real) as t:
+        bets = t.bets()
+    assert len(bets) == 1 and bets["odds"].iloc[0] == 9.5 and bets["stake"].iloc[0] == 25.0
+    assert "Caliente" in bets["description"].iloc[0]

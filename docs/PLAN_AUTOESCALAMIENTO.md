@@ -68,6 +68,16 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 25 | [x] | **Revisión de código y limpieza**: auditoría de errores y división de `app.py` | Menos errores silenciosos |
 | 26 | [x] | **App en el celular**: preparación para Streamlit Community Cloud con *secrets* | Uso desde cualquier lugar |
 
+### Fase 6 (aprobada por el usuario: A → B → C → D → F; usa Caliente, que The Odds API no cubre)
+
+| # | Estado | Tarea | Valor |
+|---|---|---|---|
+| 27 | [x] | **Caliente y apuestas reales**: momio mínimo por selección para comparar en Caliente; registro aparte de las apuestas reales (momio y monto tomados) | Valor que de verdad puedes tomar; rendimiento real |
+| 28 | [ ] | **"¿Por qué este pick?"**: explicación breve en cada boleto | Descartar picks absurdos |
+| 29 | [ ] | **Más ligas**: Ligue 1, Eredivisie, Championship, Portugal, MLS | Más oportunidades en mercados menos eficientes |
+| 30 | [ ] | **Ciclo semanal automático**: liquidar, analizar, registrar sugerencias y resumen + picks por Telegram (tarea programada semanal) | Sin depender de acordarse |
+| 31 | [ ] | **Cierre formal**: pull request, capturas en el README, versión 1.0 | Punto estable |
+
 ## Registro de ejecución
 | Fecha (UTC) | Tarea | Commit | Notas |
 |---|---|---|---|
@@ -108,3 +118,4 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 2026-11-04 | #25 Revisión de código | ver git log | 7 hallazgos, todos corregidos y con regresión: (1) **grave**: la columna "Max" de football-data (mejor precio de TODAS las casas) se usaba como casa apostable → inflaba ROI/CLV del backtest real y del estudio; excluida. (2) aviso de .env perdido tras recargar; (3) NaT rompía alertas; (4) clave gratuita de API-Football repetía llamadas rechazadas; (5) modelo guardado reutilizado pese a cambiar la configuración (huella de configuración); (6) caché ineficaz con líneas NaN; (7) estudio ocultaba AttributeError. Además: lógica de fuentes unificada en `sources.py` (la app y el CLI divergían) y ruff (pyflakes) en el CI. `main()` de la app no se dividió más: el beneficio frente al riesgo de regresiones en la UI no compensaba |
 | 2026-11-04 | #26 App en el celular | ver git log | Preparada para Streamlit Community Cloud: `requirements.txt` de ejecución (con Streamlit) y `requirements-dev.txt`; **las claves del servidor ya no se envían al navegador** (antes el campo se rellenaba con el valor del .env, lo que en la nube expondría la clave a cualquiera); lectura de *secrets*; copia de seguridad/restauración validada del registro (el disco de la nube no persiste); guía `docs/DESPLIEGUE_CELULAR.md` con el aviso de hacer la app privada. El despliegue lo hace el usuario (requiere su cuenta) |
 | 2026-11-04 | Rediseño de la interfaz (petición del usuario) | ver git log | Identidad "pizarra táctica": tema oscuro verde pizarra + tiza + acento ámbar, Barlow Condensed/IBM Plex, logo propio, sin emojis. Tarjetas de partido tipo marcador con barra 1/X/2 (paleta validada con el validador de la skill de visualización; empate gris = punto medio divergente; % siempre escritos), boletos de value bets y parlays (tablas en desplegables), mapa de calor de marcadores secuencial, gráficas Altair con tooltip y meses en español, métricas 2×2 en el celular sin desbordamiento horizontal (verificado con capturas a 390 px y 1440 px). `ui_html.py` con HTML escapado y tests |
+| 2026-11-04 | #27 Caliente | ver git log | The Odds API no cubre Caliente (ni casas mexicanas); no se hace scraping. `Pick.minimum_odds` (exacto también con push) y `ValueBetFinder.reprice`; boletos con "En Caliente: apuesta si paga ≥ X"; pestaña *Mis apuestas* (momios mínimos de toda la jornada + registro real en `mis_apuestas.sqlite`, separado de las sugerencias); *Rendimiento* elige registro. Arreglado: widgets duplicados del panel de copias |

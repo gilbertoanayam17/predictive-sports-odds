@@ -120,6 +120,14 @@ python main.py --live --league EPL --tune        # hiperparámetros con validaci
 2. Si `--tune` mejora de forma consistente el log-loss (> 0.5%) en varias temporadas, se pueden cambiar los valores por defecto en `PoissonModelConfig` o en el peso del ML.
 3. La calibración (`calibration_report`) solo debe activarse si mejora el Brier fuera de muestra.
 
+## 5a. Apostar en Caliente (o en otra casa sin momios automáticos)
+
+The Odds API no cubre las casas mexicanas como Caliente, así que la app te da el **momio mínimo** de cada selección: si Caliente paga **igual o más**, hay valor.
+- Cada boleto de *Value bets* muestra "En Caliente: apuesta si paga ≥ X.XX".
+- La pestaña **Mis apuestas** lista el momio mínimo de **todas** las selecciones de la jornada, no solo de los value bets: a veces Caliente paga más que las casas europeas en una selección que allí no tenía valor.
+- Cuando apuestes, regístralo en **Mis apuestas → Registrar una apuesta real** con el momio y el monto que tomaste. Se guarda en `mis_apuestas.sqlite`, separado de las sugerencias, y la pestaña *Rendimiento* mide **tu** rendimiento real.
+- La casa se configura en la barra lateral o con `MI_CASA=` en el `.env`.
+
 ## 5b. Estudio por liga y mercado (recomendado antes de apostar)
 
 En la app (*Fuente → Real*, pestaña **Backtest → Estudio por liga y mercado**) o con `python main.py --live --study`:

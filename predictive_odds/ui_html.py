@@ -95,6 +95,9 @@ text-transform:none;letter-spacing:0;font-weight:500}
 .legs li{font-size:.82rem;color:var(--chalk-2);padding:.18rem 0;border-bottom:1px dashed var(--line)}
 .legs li b{color:var(--chalk);font-weight:500}
 .note{font-size:.8rem;color:var(--chalk-3);margin:.2rem 0 .6rem}
+.mine{margin-top:.55rem;padding:.35rem .5rem;border:1px dashed var(--amber);border-radius:4px;font-size:.8rem;
+color:var(--chalk-2)}.mine b{font-family:'IBM Plex Mono',monospace;color:var(--amber);font-weight:500}
+.why{margin:.5rem 0 0;padding-left:1rem;font-size:.76rem;color:var(--chalk-2)}.why li{margin:.1rem 0}
 .empty{border:1px dashed var(--line);border-radius:6px;padding:1.2rem;color:var(--chalk-2);text-align:center}
 @media (max-width:640px){
 .mast .word{font-size:1.55rem}.mast .sub{letter-spacing:.06em;font-size:.68rem}.mast .meta{text-align:left}
@@ -174,15 +177,27 @@ def match_card(pred: MatchPrediction, value_count: int = 0) -> str:
             f'<span>{badge} <b class="mono">{top[0]}-{top[1]}</b></span></div></div>')
 
 
-def pick_ticket(pick: Pick, bankroll: float) -> str:
-    """Boleto de una apuesta de valor."""
+def pick_ticket(pick: Pick, bankroll: float, my_book: str = "", min_edge: float = 0.04, why: Sequence[str] = ()) -> str:
+    """Boleto de una apuesta de valor.
+
+    Args:
+        pick: Pick.
+        bankroll: Bankroll para el stake en dinero.
+        my_book: Casa del usuario sin momios automáticos (p. ej. Caliente): se muestra el momio mínimo.
+        min_edge: EV ajustado mínimo para calcular ese momio.
+        why: Líneas de explicación ("¿por qué este pick?").
+    """
+    mine = (f'<div class="mine">En {e(my_book)}: apuesta si paga <b>≥ {pick.minimum_odds(min_edge):.2f}</b></div>'
+            if my_book else "")
+    reasons = (f'<ul class="why">{"".join(f"<li>{e(r)}</li>" for r in why)}</ul>' if why else "")
     return (f'<div class="card ticket"><div class="when">{e(pick.league)} · {e(pick.bookmaker)}</div>'
             f'<div class="sel">{e(pick.selection.label)}</div><div class="fx">{e(pick.fixture)}</div>'
             f'<div class="row"><div class="price">{pick.odds:.2f}<small>momio</small></div>'
             f'<div><span class="badge">EV {pick.adjusted_edge:+.1%}</span></div>'
             f'<div class="stake">Stake<b>{pick.stake_fraction * bankroll:,.2f}</b></div></div>'
             f'<div class="foot"><span>Modelo <b>{_pct(pick.model_prob)}</b></span>'
-            f'<span>Mercado <b>{_pct(pick.market_prob) if pick.market_prob is not None else "—"}</b></span></div></div>')
+            f'<span>Mercado <b>{_pct(pick.market_prob) if pick.market_prob is not None else "—"}</b></span></div>'
+            f'{mine}{reasons}</div>')
 
 
 def parlay_ticket(parlay: Parlay, bankroll: float) -> str:

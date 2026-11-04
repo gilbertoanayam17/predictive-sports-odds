@@ -191,6 +191,23 @@ class Pick:
     decision_prob: float | None = None
     action_share: float = 1.0
 
+    def minimum_odds(self, min_edge: float = 0.04) -> float:
+        """Momio mínimo a partir del cual esta selección tiene valor (EV ajustado ≥ ``min_edge``).
+
+        Sirve para casas sin momios automáticos (p. ej. Caliente): si su precio es
+        mayor o igual que este, hay valor según el modelo encogido hacia el mercado.
+
+        Args:
+            min_edge: EV ajustado mínimo exigido.
+
+        Returns:
+            Momio decimal mínimo (``inf`` si la probabilidad es 0).
+        """
+        p = self.decision_prob if self.decision_prob is not None else self.model_prob
+        if p <= 0 or self.action_share <= 0:
+            return float("inf")
+        return (1.0 + min_edge / self.action_share) / p
+
     @property
     def adjusted_edge(self) -> float:
         """EV por unidad con la probabilidad de decisión (modelo encogido hacia el mercado)."""
@@ -404,6 +421,26 @@ class ValueBetFinder:
                      if self.is_value(pick) else 0.0)
             picks.append(replace(pick, stake_fraction=stake))
         return picks
+
+    def reprice(self, pick: Pick, odds: float, bookmaker: str) -> Pick:
+        """El mismo pick al momio que ofrece (o pagó) otra casa, con EV y stake recalculados.
+
+        Args:
+            pick: Pick evaluado (con probabilidades del modelo y del mercado).
+            odds: Momio decimal de la otra casa.
+            bookmaker: Nombre de la casa (p. ej. ``"Caliente"``).
+
+        Returns:
+            Pick con ``odds``/``bookmaker`` nuevos y stake de Kelly modificado (0 si ya no hay valor).
+
+        Raises:
+            ValueError: Si el momio no es mayor que 1.
+        """
+        implied_probability(odds)  # valida el momio
+        repriced = replace(pick, odds=float(odds), bookmaker=bookmaker)
+        stake = (modified_kelly(repriced.model_prob, repriced.odds, repriced.market_prob, self.config.kelly)
+                 * repriced.action_share if self.is_value(repriced) else 0.0)
+        return replace(repriced, stake_fraction=stake)
 
     def decision_probability(self, pick: Pick) -> float:
         """Probabilidad usada para decidir el valor (modelo encogido hacia el mercado).
