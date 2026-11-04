@@ -37,6 +37,7 @@ from predictive_odds.data_fetcher import (
 from predictive_odds.bet_tracker import BetTracker, TrackerError
 from predictive_odds.backtester import BacktestConfig, Backtester, BacktestResult
 from predictive_odds.parlay_builder import ParlayConfig
+from predictive_odds.xg_sources import UnderstatProvider, XgEnrichedProvider
 from predictive_odds.statistical_models import InsufficientDataError
 from predictive_odds.pipeline import AnalysisPipeline, AnalysisResult, PipelineConfig
 
@@ -81,6 +82,8 @@ def build_fetcher(args: argparse.Namespace) -> DataFetcher:
     history: ResultsProvider
     if league.football_data_code:
         history = FootballDataCoUkProvider()
+        if args.understat:
+            history = XgEnrichedProvider(history, UnderstatProvider())
     elif api_football is not None:
         history = api_football
     else:
@@ -221,6 +224,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--played-rounds", type=int, default=28,
                    help="Simulación: jornadas jugadas de la temporada actual (sube a 29 para liquidar)")
     p.add_argument("--live", action="store_true", help="Usar APIs reales (requiere ODDS_API_KEY)")
+    p.add_argument("--understat", action="store_true",
+                   help="En vivo: añadir xG de Understat al histórico (experimental; solo ligas europeas)")
     p.add_argument("--btts", action="store_true", help="En vivo: pedir también momios BTTS (más créditos)")
     p.add_argument("--no-ml", action="store_true", help="Desactivar el modelo de ML")
     p.add_argument("--same-match", action="store_true", help="Permitir patas del mismo partido (Bet Builder)")

@@ -39,6 +39,7 @@ predictive_odds/
 ├── model_store.py         # Guardar/cargar modelos entrenados (joblib + metadatos)
 ├── injuries.py            # Bajas → multiplicadores de ataque/defensa sobre λ
 ├── bet_tracker.py         # Registro SQLite: apuestas, liquidación, P&L y CLV
+├── xg_sources.py          # merge_xg (fusión de xG de cualquier fuente) + Understat (experimental)
 └── pipeline.py            # AnalysisPipeline.run() → AnalysisResult (DataFrames listos para UI)
 main.py                    # Demo de punta a punta en la terminal
 ```
@@ -109,6 +110,6 @@ La app no contiene lógica de negocio: solo llama a `AnalysisPipeline`, `Backtes
 - Las **lesiones** se convierten en ajustes con una heurística (3% de ataque y 2% de defensa por baja; las dudas cuentan a medias; tope del 15%). Para mejorarlo hacen falta datos de importancia por jugador (`PlayerImpact`), como minutos o goles+asistencias.
 - **Multiliga:** solo la EPL está configurada como liga doméstica de los participantes de la UCL. Para la UCL real hay que registrar LaLiga, Serie A, Bundesliga y Ligue 1 (`register_league`) y pasarlas en `--extra-leagues`.
 - Los momios de un parlay del mismo partido se calculan como producto; un *Bet Builder* real los ajusta por correlación (el sistema lo avisa).
-- Scrapers de xG (Understat) como un `ResultsProvider` más.
+- **Understat** (`--live --understat`): el lector está implementado y probado contra el formato documentado del sitio, pero **no se ha podido verificar en vivo** porque la red del entorno de desarrollo bloquea understat.com. Hay que probarlo en local. Si falla, el sistema sigue funcionando sin xG. La fusión `merge_xg` (nombres normalizados, fecha ±2 días y verificación del marcador) sí está verificada.
 
 *Herramienta analítica. Apostar implica riesgo de pérdida; juega con responsabilidad.*
