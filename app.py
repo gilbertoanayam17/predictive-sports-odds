@@ -231,6 +231,11 @@ def main() -> None:
             af_key = st.text_input("Clave de API-Football (opcional)", value=os.environ.get("API_FOOTBALL_KEY", ""),
                                    type="password", help="Activa el ajuste por lesiones. Requiere plan de pago: "
                                                          "el gratuito no cubre la temporada actual")
+            credits = TheOddsApiProvider.read_credits()
+            if credits:
+                st.caption(f"Créditos de momios restantes: **{credits.get('remaining', '?')}** "
+                           f"(actualizado {str(credits.get('updated', ''))[:16].replace('T', ' ')} UTC). "
+                           "Cada liga analizada cuesta ~2; sin partidos próximos, 0.")
             if st.button("Probar conexión", help="No consume créditos"):
                 with st.spinner("Comprobando fuentes…"):
                     for chk in check_all(odds_key, af_key, league_key, season):
@@ -265,7 +270,7 @@ def main() -> None:
             "lesiones. Su plan gratuito solo cubre temporadas antiguas, así que no sirve para la actual.\n\n"
             "El histórico de la Premier League, La Liga, Serie A, Bundesliga y Liga MX se descarga de "
             "football-data.co.uk, sin clave. "
-            "Cada análisis gasta unos 4 créditos de momios y los resultados se guardan en caché 10 minutos.\n\n"
+            "Cada liga analizada gasta ~2 créditos de momios (0 si no tiene partidos en los próximos 4 días) y los resultados se guardan en caché 10 minutos.\n\n"
             "**Consejo:** antes de apostar, revisa la pestaña *Backtest* y registra las sugerencias en *Registro* "
             "durante unas semanas sin apostar, para medir el CLV real."
         )

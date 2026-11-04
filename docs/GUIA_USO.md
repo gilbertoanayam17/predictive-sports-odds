@@ -78,7 +78,7 @@ SIMULATE=1 TRACK=1 scripts/daily_run.sh EPL LIGA_MX        # ensayo sin red ni c
 7 */6 * * * cd /ruta/predictive-sports-odds && ODDS_API_KEY=xxx TRACK=1 scripts/daily_run.sh EPL >> data/cron.log 2>&1
 ```
 
-El `BANKROLL` del script se reparte entre las ligas, para que la exposición conjunta no supere el tope. **Cuota de The Odds API:** cada llamada cuesta *mercados × regiones* créditos. Con la configuración por defecto (`h2h,totals` × `eu,uk`) son 4 créditos, así que una liga cada 6 horas gasta ≈ 480 créditos al mes, casi todo el plan gratuito (500). Con el plan gratuito conviene ejecutar cada 12 horas o usar una sola región (`TheOddsApiProvider(regions="eu")`).
+El `BANKROLL` del script se reparte entre las ligas, para que la exposición conjunta no supere el tope. **Cuota de The Odds API:** cada llamada a momios cuesta *mercados × regiones* créditos: con la configuración por defecto (`h2h,totals` × `eu`) son **2**. Antes se consulta el endpoint gratuito de eventos, y si la liga no tiene partidos en las próximas 96 horas no se gasta nada. Una liga cada 6 horas gasta como mucho ≈ 240 créditos al mes; en la práctica menos, por los parones. La barra lateral de la app muestra los créditos restantes.
 
 ## 4. Cómo leer los resultados
 

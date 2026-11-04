@@ -907,8 +907,17 @@ class ApiFootballProvider(ResultsProvider):
 class TheOddsApiProvider(OddsProvider):
     """Momios en vivo de múltiples casas desde The Odds API v4.
 
-    Plan gratuito: 500 créditos/mes. Cada mercado x región consume 1 crédito
-    por llamada; ``btts`` requiere el endpoint por evento (más caro).
+    Plan gratuito: 500 créditos/mes. Cada llamada a ``/odds`` cuesta
+    *mercados × regiones* créditos; ``btts`` requiere el endpoint por evento
+    (más caro). Para ahorrar créditos:
+
+    * antes de pedir momios se consulta ``/events``, que es **gratuito**: si no
+      hay partidos dentro del horizonte (``horizon_hours``) no se gasta nada;
+    * una sola región por defecto (``eu``: incluye Pinnacle y las casas europeas);
+    * caché en disco de 10 minutos (el horizonte se redondea a la hora para que
+      la caché acierte);
+    * los créditos restantes se guardan en ``.cache/odds_api/credits.json`` para
+      mostrarlos en la app.
     """
 
     name = "the-odds-api"
@@ -917,10 +926,12 @@ class TheOddsApiProvider(OddsProvider):
     def __init__(
         self,
         api_key: str,
-        regions: str = "eu,uk",
+        regions: str = "eu",
         markets: Sequence[str] = ("h2h", "totals"),
         include_btts: bool = False,
         client: HttpClient | None = None,
+        horizon_hours: float | None = 96.0,
+        credits_file: Path | None = Path(".cache/odds_api/credits.json"),
     ) -> None:
         """Crea el proveedor.
 
@@ -930,6 +941,9 @@ class TheOddsApiProvider(OddsProvider):
             markets: Mercados del endpoint principal (``h2h``, ``totals``).
             include_btts: Si se consultan también los momios BTTS por evento.
             client: Cliente HTTP opcional.
+            horizon_hours: Solo partidos que empiezan en las próximas N horas
+                (``None`` = sin límite y sin consulta previa de eventos).
+            credits_file: Dónde guardar los créditos restantes (``None`` = no guardar).
 
         Raises:
             AuthenticationError: Si no se proporciona API key.
@@ -940,15 +954,60 @@ class TheOddsApiProvider(OddsProvider):
         self.regions = regions
         self.markets = tuple(markets)
         self.include_btts = include_btts
+        self.horizon_hours = horizon_hours
+        self.credits_file = credits_file
         self.client = client or HttpClient(
             self.BASE_URL, config=HttpClientConfig(cache_dir=Path(".cache/odds_api"), cache_ttl=600)
         )
 
+    @property
+    def credit_cost(self) -> int:
+        """Créditos que cuesta cada llamada a ``/odds`` (mercados × regiones)."""
+        return len(self.markets) * len([r for r in self.regions.split(",") if r.strip()])
+
     def _log_quota(self) -> None:
-        """Registra los créditos restantes informados por la API."""
+        """Registra (y persiste) los créditos restantes informados por la API."""
         remaining = self.client.last_headers.get("x-requests-remaining")
-        if remaining is not None:
-            logger.info("The Odds API: créditos restantes = %s", remaining)
+        if remaining is None:
+            return
+        logger.info("The Odds API: créditos restantes = %s", remaining)
+        if self.credits_file is not None:
+            try:
+                self.credits_file.parent.mkdir(parents=True, exist_ok=True)
+                self.credits_file.write_text(json.dumps({
+                    "remaining": remaining, "used": self.client.last_headers.get("x-requests-used"),
+                    "updated": pd.Timestamp.now(tz="UTC").isoformat(timespec="seconds")}), encoding="utf-8")
+            except OSError as exc:
+                logger.debug("No se pudieron guardar los créditos: %s", exc)
+
+    @staticmethod
+    def read_credits(path: Path = Path(".cache/odds_api/credits.json")) -> dict[str, Any] | None:
+        """Últimos créditos conocidos (``remaining``, ``used``, ``updated``) o ``None``."""
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else None
+        except (OSError, ValueError):
+            return None
+
+    def upcoming_events(self, league: LeagueConfig) -> list[dict[str, Any]]:
+        """Eventos próximos dentro del horizonte, vía ``/events`` (no consume créditos).
+
+        Args:
+            league: Liga.
+
+        Returns:
+            Lista de eventos (``id``, ``commence_time``, equipos).
+        """
+        params = {"apiKey": self.api_key, "dateFormat": "iso", **self._window()}
+        events = self.client.get_json(f"sports/{league.odds_api_sport_key}/events", params)
+        return events if isinstance(events, list) else []
+
+    def _window(self) -> dict[str, str]:
+        """Parámetros ``commenceTimeTo`` del horizonte (redondeado a la hora para aprovechar la caché)."""
+        if self.horizon_hours is None:
+            return {}
+        until = (pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=self.horizon_hours)).ceil("h")
+        return {"commenceTimeTo": until.strftime("%Y-%m-%dT%H:%M:%SZ")}
 
     @staticmethod
     def parse_events(events: Any, league_key: str) -> pd.DataFrame:
@@ -1002,8 +1061,20 @@ class TheOddsApiProvider(OddsProvider):
         """Descarga momios actuales (ver :class:`OddsProvider`)."""
         if not league.odds_api_sport_key:
             raise ProviderNotSupportedError(f"{league.name} no tiene clave de The Odds API")
+        if self.horizon_hours is not None:
+            try:
+                upcoming = self.upcoming_events(league)
+            except (RateLimitError, AuthenticationError):
+                raise
+            except DataFetchError as exc:  # si /events falla, se pide /odds igualmente
+                logger.warning("No se pudo consultar /events (%s); se piden los momios directamente", exc)
+                upcoming = None
+            if upcoming is not None and not upcoming:
+                logger.info("%s: sin partidos en las próximas %.0f h; no se gastan créditos",
+                            league.name, self.horizon_hours)
+                return empty_odds()
         params = {"apiKey": self.api_key, "regions": self.regions, "markets": ",".join(self.markets),
-                  "oddsFormat": "decimal", "dateFormat": "iso"}
+                  "oddsFormat": "decimal", "dateFormat": "iso", **self._window()}
         events = self.client.get_json(f"sports/{league.odds_api_sport_key}/odds", params)
         self._log_quota()
         frames = [self.parse_events(events, league.key)]

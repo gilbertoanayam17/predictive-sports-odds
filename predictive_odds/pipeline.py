@@ -355,7 +355,8 @@ class AnalysisPipeline:
         if fixtures.empty and not odds.empty:
             fixtures = self.fetcher.fixtures_from_odds(odds, known)
         if fixtures.empty:
-            raise DataFetchError("No hay partidos próximos que analizar")
+            raise DataFetchError("No hay partidos próximos que analizar (ninguno con momios publicados en los "
+                                 "próximos días; no se gastaron créditos)")
         if not odds.empty:
             odds = self.fetcher.link_odds_to_fixtures(odds, fixtures)
 
