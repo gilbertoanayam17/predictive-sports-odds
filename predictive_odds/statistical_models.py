@@ -646,7 +646,7 @@ class PoissonModel:
             return float(value), grad
 
         theta0 = np.zeros(2 + 2 * n)
-        theta0[0] = np.log(max(np.mean(np.r_[yh, ya]), 0.1))
+        theta0[0] = float(np.log(max(float(np.mean(np.r_[yh, ya])), 0.1)))
         theta0[1] = 0.2
         res = minimize(nll, theta0, jac=True, method="L-BFGS-B")
         if not np.all(np.isfinite(res.x)):

@@ -495,8 +495,8 @@ def validate_odds(df: pd.DataFrame) -> pd.DataFrame:
             return False
 
     n0 = len(out)
-    combos = out[["market", "selection", "line"]].astype(object).where(out[["market", "selection", "line"]].notna(), None)
-    keys = list(zip(combos["market"], combos["selection"], combos["line"]))
+    lines: list[float | None] = [None if pd.isna(v) else float(v) for v in out["line"]]
+    keys = list(zip(out["market"].astype(str), out["selection"].astype(str), lines))
     valid = {k: _valid_selection(*k) for k in set(keys)}
     sel_ok = pd.Series([valid[k] for k in keys], index=out.index, dtype=bool)
     ok = out["odds"].between(1.0, 1000.0, inclusive="neither") & sel_ok
