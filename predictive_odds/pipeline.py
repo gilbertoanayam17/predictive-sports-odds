@@ -8,7 +8,7 @@ DataFrames; una app de Streamlit/Dash solo tiene que llamar a
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -67,6 +67,7 @@ class PipelineConfig:
         max_model_age_days: Antigüedad máxima del bundle respecto al último partido.
         extra_leagues: Ligas domésticas adicionales para el modelo de Poisson
             multiliga (útil en competiciones internacionales como la UCL).
+        max_singles: Máximo de sencillas sugeridas (las de mayor EV ajustado); ``None`` = sin límite.
         use_injuries: Si se ajustan las λ por lesiones/bajas reportadas.
         injury: Parámetros de la heurística de lesiones.
         calibrator: Calibrador opcional (ajustado, p. ej., sobre un backtest).
@@ -88,6 +89,7 @@ class PipelineConfig:
     calibrator: ProbabilityCalibrator | None = None
     use_injuries: bool = True
     extra_leagues: tuple[str, ...] = ()
+    max_singles: int | None = None
     injury: InjuryImpactConfig = field(default_factory=InjuryImpactConfig)
 
 
@@ -363,6 +365,7 @@ class AnalysisPipeline:
         finder = ValueBetFinder(c.value)
         all_picks = finder.evaluate(predictions, odds)
         value_bets = sorted([p for p in all_picks if finder.is_value(p)], key=lambda p: p.adjusted_edge, reverse=True)
+        value_bets = value_bets[:c.max_singles] if c.max_singles is not None else value_bets
         parlays = ParlayBuilder(c.parlay).build(all_picks, predictions)
         value_bets, parlays, _ = apply_exposure_cap(value_bets, parlays, c.max_total_exposure)
 
@@ -374,3 +377,81 @@ class AnalysisPipeline:
             team_ratings=ratings[ratings["team"].isin(set(known))].reset_index(drop=True), adjustments=adjustments,
             odds=odds,
         )
+
+
+@dataclass
+class SlateResult:
+    """Resultado de analizar varias ligas como una sola jornada.
+
+    Attributes:
+        bankroll: Bankroll común.
+        results: Resultado completo por liga (las que se pudieron analizar).
+        errors: Ligas que fallaron y el motivo.
+        value_bets: Sencillas de valor de todas las ligas (tope de exposición global).
+        parlays: Parlays construidos con picks de cualquier liga.
+    """
+
+    bankroll: float
+    results: dict[str, AnalysisResult]
+    errors: dict[str, str]
+    value_bets: list[Pick]
+    parlays: list[Parlay]
+
+    @property
+    def total_stake(self) -> float:
+        """Stake total sugerido en unidades monetarias."""
+        frac = sum(p.stake_fraction for p in self.value_bets) + sum(p.stake_fraction for p in self.parlays)
+        return frac * self.bankroll
+
+    def value_bets_frame(self) -> pd.DataFrame:
+        """Tabla de sencillas con la liga de cada pick."""
+        return pd.DataFrame([{"liga": p.league, **p.to_dict(self.bankroll)} for p in self.value_bets])
+
+    def parlays_frame(self) -> pd.DataFrame:
+        """Tabla de parlays con las ligas implicadas."""
+        return pd.DataFrame([{"ligas": "+".join(sorted({l.league for l in p.legs})), **p.to_dict(self.bankroll)}
+                             for p in self.parlays])
+
+
+def analyze_slate(fetcher: DataFetcher, league_keys: list[str], base: PipelineConfig | None = None,
+                  evaluate: bool = False) -> SlateResult:
+    """Analiza varias ligas y combina sus picks en una sola jornada.
+
+    Cada liga se analiza con :class:`AnalysisPipeline` (una liga que falla se
+    registra en ``errors`` y no detiene al resto). Después se vuelven a
+    seleccionar las sencillas de valor de todas las ligas, se construyen
+    parlays que pueden cruzar ligas y se aplica el tope de exposición GLOBAL.
+
+    Args:
+        fetcher: Fachada de datos.
+        league_keys: Ligas a analizar.
+        base: Configuración común (su ``league_key`` se ignora).
+        evaluate: Si se ejecuta la validación fuera de muestra por liga.
+
+    Returns:
+        :class:`SlateResult`.
+
+    Raises:
+        DataFetchError: Si ninguna liga pudo analizarse.
+    """
+    base = base or PipelineConfig()
+    results: dict[str, AnalysisResult] = {}
+    errors: dict[str, str] = {}
+    for key in league_keys:
+        try:
+            cfg = replace(base, league_key=key,
+                          extra_leagues=base.extra_leagues or (("EPL",) if get_league(key).is_international else ()))
+            results[key] = AnalysisPipeline(fetcher, cfg).run(evaluate=evaluate)
+        except (DataFetchError, InsufficientDataError) as exc:
+            logger.warning("Liga %s omitida: %s", key, exc)
+            errors[key] = str(exc)
+    if not results:
+        raise DataFetchError(f"Ninguna liga pudo analizarse: {errors}")
+    all_picks = [p for r in results.values() for p in r.all_picks]
+    predictions = {mid: pred for r in results.values() for mid, pred in r.predictions.items()}
+    finder = ValueBetFinder(base.value)
+    singles = sorted([p for p in all_picks if finder.is_value(p)], key=lambda p: p.adjusted_edge, reverse=True)
+    singles = singles[:base.max_singles] if base.max_singles is not None else singles
+    parlays = ParlayBuilder(base.parlay).build(all_picks, predictions)
+    singles, parlays, _ = apply_exposure_cap(singles, parlays, base.max_total_exposure)
+    return SlateResult(base.bankroll, results, errors, singles, parlays)

@@ -43,7 +43,7 @@ from predictive_odds.odds_history import OddsHistory, OddsHistoryError
 from predictive_odds.report import save_report
 from predictive_odds.risk import RiskConfig, risk_table
 from predictive_odds.tuning import tune_ml_weight, tune_poisson
-from predictive_odds.pipeline import AnalysisPipeline, AnalysisResult, PipelineConfig
+from predictive_odds.pipeline import AnalysisPipeline, AnalysisResult, PipelineConfig, SlateResult, analyze_slate
 
 SEPARATOR = "=" * 100
 
@@ -186,6 +186,28 @@ def print_backtest(result: BacktestResult, league_key: str, simulated: bool) -> 
     print("\nCLV > 0 de forma sostenida es la mejor señal de un edge real; el ROI a corto plazo es muy ruidoso.")
 
 
+def print_slate(slate: SlateResult, simulated: bool) -> None:
+    """Imprime el resumen de una jornada multiliga.
+
+    Args:
+        slate: Resultado multiliga.
+        simulated: Si los datos son simulados.
+    """
+    tag = " [DATOS SIMULADOS]" if simulated else ""
+    section(f"JORNADA MULTILIGA: {', '.join(slate.results)}{tag}")
+    for key, err in slate.errors.items():
+        print(f"⚠ {key} omitida: {err}")
+    for key, res in slate.results.items():
+        print(f"  {get_league(key).name}: {len(res.predictions)} partidos, {len(res.all_picks)} selecciones evaluadas")
+    section("SENCILLAS DE VALOR (todas las ligas, tope de exposición global)")
+    show(slate.value_bets_frame().head(20), "Ninguna selección supera el umbral de valor.")
+    if len(slate.value_bets) > 20:
+        print(f"... y {len(slate.value_bets) - 20} más (usa --max-singles para limitarlas)")
+    section("PARLAYS (pueden combinar ligas)")
+    show(slate.parlays_frame(), "No hay combinaciones que cumplan los criterios.")
+    print(f"\nExposición total: {slate.total_stake:,.2f} ({100 * slate.total_stake / slate.bankroll:.1f}% del bankroll)")
+
+
 def print_risk(result: AnalysisResult, n_rounds: int) -> None:
     """Imprime la matriz Monte Carlo de riesgo para la jornada analizada.
 
@@ -269,6 +291,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parsea los argumentos de línea de comandos."""
     p = argparse.ArgumentParser(description="Value bets y parlays con modelos estadísticos")
     p.add_argument("--league", default="EPL", help="EPL, UCL o LIGA_MX")
+    p.add_argument("--leagues", nargs="+", default=None,
+                   help="Jornada multiliga (p. ej. --leagues EPL LIGA_MX UCL): parlays entre ligas y tope global")
+    p.add_argument("--max-singles", type=int, default=None, help="Máximo de sencillas sugeridas (mayor EV ajustado)")
     p.add_argument("--season", type=int, default=2025, help="Temporada actual (año de inicio)")
     p.add_argument("--bankroll", type=float, default=1000.0)
     p.add_argument("--seed", type=int, default=7, help="Semilla de la simulación")
@@ -317,10 +342,16 @@ def main(argv: list[str] | None = None) -> int:
             print_backtest(run_backtest(args), league.key, simulated=not args.live)
             return 0
         fetcher = build_fetcher(args)
+        if args.leagues:
+            slate_cfg = PipelineConfig(seasons=(args.season - 1, args.season), bankroll=args.bankroll,
+                                       use_ml=not args.no_ml, max_singles=args.max_singles,
+                                       parlay=ParlayConfig(allow_same_match=args.same_match))
+            print_slate(analyze_slate(fetcher, [k.upper() for k in args.leagues], slate_cfg), not args.live)
+            return 0
         config = PipelineConfig(
             league_key=league.key, seasons=(args.season - 1, args.season), bankroll=args.bankroll,
             use_ml=not args.no_ml, parlay=ParlayConfig(allow_same_match=args.same_match),
-            model_path=args.model_path,
+            model_path=args.model_path, max_singles=args.max_singles,
             extra_leagues=tuple(args.extra_leagues) if args.extra_leagues is not None
             else (("EPL",) if league.is_international else ()),
         )

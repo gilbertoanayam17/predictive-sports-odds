@@ -46,7 +46,7 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | # | Estado | Tarea | Valor | Depende de |
 |---|---|---|---|---|
 | 15 | [x] | **Pasada de robustez**: casos límite del pipeline como tests de regresión | Menos sorpresas en producción | — |
-| 16 | [ ] | **Jornada multiliga**: analizar varias ligas a la vez y construir parlays con picks de todas, con un tope de exposición global | Más diversificación y combinaciones | — |
+| 16 | [x] | **Jornada multiliga**: analizar varias ligas a la vez y construir parlays con picks de todas, con un tope de exposición global | Más diversificación y combinaciones | — |
 | 17 | [ ] | **Operación diaria**: script listo para cron (snapshot + análisis + informe + liquidación) y guía de uso en `docs/` | Usar el sistema día a día | 12, 14 |
 | 18 | [ ] | **Rendimiento del backtest**: reentreno cada N fechas y medición del impacto en las métricas | Backtests más rápidos para iterar | 1 |
 
@@ -71,3 +71,4 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 2026-11-04 | #13 DNB y hándicap asiático | ver git log | Rejilla de resultados graduados, `p_eff`/`action_share` (EV exacto, Kelly exacto con push), liquidación con push y medios resultados en backtest y registro, emparejamiento de las caras del hándicap al quitar el margen; Odds API `spreads`, columnas AH de football-data (+ cierre), simulación. Excluidos de parlays. 21 tests nuevos. Backtest simulado: hándicap asiático con ROI +11%, CLV +6% |
 | 2026-11-04 | #14 Histórico de momios | ver git log | `odds_history.py`: snapshots SQLite, movimiento del mejor precio, cierre propio (última captura pre-partido; ignora capturas en juego y la pseudo-casa de cierre) que alimenta el CLV del registro. CLI `--snapshot`, `--movement` |
 | 2026-11-04 | #15 Robustez | ver git log | 5 regresiones: sin proveedor de momios, temporada terminada, momios corruptos, inicio de temporada (ML y evaluación se desactivan solos), histórico insuficiente |
+| 2026-11-04 | #16 Jornada multiliga | ver git log | `analyze_slate` + `SlateResult` (ligas fallidas → `errors`), parlays entre ligas, tope global, `max_singles`; CLI `--leagues`, `--max-singles`. Detectado: concentración de sencillas correlacionadas en un mismo partido → se mide un tope por partido |

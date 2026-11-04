@@ -14,6 +14,7 @@ python main.py --league LIGA_MX --bankroll 5000
 python main.py --same-match                     # permite parlays con varias patas del mismo partido
 python main.py --backtest                       # backtest walk-forward: ROI, CLV, drawdown, calibración
 python main.py --report informe.html            # informe exportable (.html o .md); --risk añade el Monte Carlo
+python main.py --leagues EPL LIGA_MX UCL --max-singles 12   # jornada multiliga con parlays entre ligas
 python main.py --track bets.sqlite              # guarda las apuestas sugeridas (idempotente)
 python main.py --track bets.sqlite --settle --played-rounds 29   # liquida (en la simulación, juega la jornada 29)
 python -m pytest
@@ -101,6 +102,9 @@ Validación *rolling origin*: en varios cortes temporales se entrena con el pasa
 
 ### Registro de apuestas (`bet_tracker.py`)
 SQLite con restricciones de integridad. Guarda sencillas y parlays (sin duplicar si se reejecuta el análisis), liquida cuando hay resultados (un parlay, cuando terminaron todas sus patas), permite anular apuestas, guarda la probabilidad de cierre para el CLV y devuelve el P&L, el ROI por mercado y la curva de bankroll. Solo registra; nunca coloca apuestas.
+
+### Jornada multiliga (`analyze_slate`, `--leagues`)
+Analiza varias ligas (si una falla, se informa y el resto continúa), junta todos los picks, construye parlays que pueden cruzar ligas y aplica el tope de exposición de forma **global**. `max_singles` / `--max-singles` limita las sencillas a las de mayor EV ajustado.
 
 ### Histórico de momios (`odds_history.py`, `--snapshot`)
 Cada ejecución con `--snapshot odds.sqlite` guarda los momios (programar el análisis cada pocas horas construye la serie). `--movement` muestra el movimiento del mejor precio por selección; un acortamiento fuerte suele indicar dinero informado. Con `--track bets.sqlite --settle --snapshot odds.sqlite`, la última captura previa al inicio sirve como **línea de cierre propia**, y así se calcula el CLV de las apuestas reales sin depender de fuentes de terceros.
