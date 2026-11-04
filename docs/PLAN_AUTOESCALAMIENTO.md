@@ -30,6 +30,17 @@ Plan para que el desarrollo continúe de forma autónoma: al terminar una tarea,
 | 7 | [x] | **App Streamlit** (`app.py`): predicciones, value bets, parlays, backtest y ajustes | Fase de UI | 1, 6 |
 | 8 | [~] | **Proveedor de xG de Understat** (opcional, con caché y tolerancia a fallos) | Mejor señal en ligas top | — |
 
+### Fase 2 (generada automáticamente al terminar el backlog inicial)
+
+| # | Estado | Tarea | Valor | Depende de |
+|---|---|---|---|---|
+| 9 | [ ] | **Empaquetado** (`pyproject.toml`, `pip install -e .`, comando `predictive-odds`) | Instalación y reutilización triviales | — |
+| 10 | [ ] | **Ajuste de hiperparámetros** con validación cronológica (vida media, peso del xG, prior, peso del ML); solo se cambian los valores por defecto si mejoran fuera de muestra | Mejor modelo, medido | 1 |
+| 11 | [ ] | **Simulador de riesgo Monte Carlo**: distribución de bankroll, drawdown y riesgo de ruina según la fracción de Kelly y el tope de exposición | Elegir el staking con datos | 1 |
+| 12 | [ ] | **Informe diario exportable** (Markdown/HTML) con picks, parlays, stakes y avisos | Consumo fácil fuera de la terminal | — |
+| 13 | [ ] | **Mercados extra**: Draw No Bet y hándicap asiático (con push/medio push) | Más oportunidades de valor | — |
+| 14 | [ ] | **Histórico de momios** (snapshots en SQLite) para medir el movimiento de línea y el CLV en vivo | CLV real sin depender del cierre de terceros | 6 |
+
 ## Registro de ejecución
 | Fecha (UTC) | Tarea | Commit | Notas |
 |---|---|---|---|
