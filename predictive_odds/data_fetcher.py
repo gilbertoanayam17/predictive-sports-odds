@@ -396,6 +396,13 @@ class TeamNameNormalizer:
         target = self.key(name)
         if target in by_key:
             return by_key[target]
+        # "Hull" ↔ "Hull City", "Ipswich" ↔ "Ipswich Town": las palabras de uno contienen las del otro.
+        # Solo si el candidato es único ("Manchester" no debe casar con United y City a la vez).
+        words = set(target.split())
+        if words:
+            nested = [k for k in by_key if (set(k.split()) <= words or words <= set(k.split()))]
+            if len(nested) == 1:
+                return by_key[nested[0]]
         close = difflib.get_close_matches(target, list(by_key), n=1, cutoff=self.fuzzy_cutoff)
         return by_key[close[0]] if close else None
 

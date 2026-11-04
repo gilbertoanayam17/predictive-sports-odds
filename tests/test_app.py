@@ -46,3 +46,14 @@ def test_app_real_mode_without_key_shows_onboarding(monkeypatch: pytest.MonkeyPa
     assert any("Cómo usar datos reales" in i.value for i in at.info)
     assert any(b.label == "Probar conexión" for b in at.button)
     assert any(b.label == "Ejecutar backtest" for b in at.button)  # backtest real disponible sin clave
+
+
+def test_app_settle_button(tmp_path: Path) -> None:
+    at = AppTest.from_file(APP, default_timeout=120)
+    at.run()
+    at.text_input[0].set_value(str(tmp_path / "bets.sqlite")).run()
+    next(b for b in at.button if b.label == "Registrar las apuestas sugeridas").click().run()
+    next(b for b in at.button if b.label == "Liquidar con resultados").click().run()
+    assert not at.exception, at.exception
+    # En la simulación la jornada aún no se jugó: no hay nada que liquidar todavía
+    assert any("pendientes" in i.value for i in at.info)

@@ -22,7 +22,7 @@ import sys
 
 import pandas as pd
 
-from predictive_odds.config import ConfigurationError, get_league
+from predictive_odds.config import ConfigurationError, current_season, get_league
 from predictive_odds.data_fetcher import (
     ApiFootballProvider,
     AuthenticationError,
@@ -267,6 +267,10 @@ def print_report(result: AnalysisResult, simulated: bool) -> None:
         for team, adj in result.adjustments.items():
             print(f"   • {team}: ataque x{adj.attack:.2f}, goles recibidos x{adj.defense:.2f} — {adj.reason}")
 
+    if result.unknown_teams:
+        print(f"\n⚠ Sin historial (fuerza promedio asumida): {', '.join(result.unknown_teams)}. "
+              "Si no son recién ascendidos, revisa --season.")
+
     section(f"5. APUESTAS DE VALOR (sencillas) — bankroll {result.bankroll:,.0f}")
     vb = result.value_bets_frame()
     show(vb.head(15), "Ninguna selección supera el umbral de valor.")
@@ -294,7 +298,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--leagues", nargs="+", default=None,
                    help="Jornada multiliga (p. ej. --leagues EPL LIGA_MX UCL): parlays entre ligas y tope global")
     p.add_argument("--max-singles", type=int, default=None, help="Máximo de sencillas sugeridas (mayor EV ajustado)")
-    p.add_argument("--season", type=int, default=2025, help="Temporada actual (año de inicio)")
+    p.add_argument("--season", type=int, default=current_season(),
+                   help="Temporada actual (año de inicio; por defecto la temporada en curso)")
     p.add_argument("--bankroll", type=float, default=1000.0)
     p.add_argument("--seed", type=int, default=7, help="Semilla de la simulación")
     p.add_argument("--played-rounds", type=int, default=28,

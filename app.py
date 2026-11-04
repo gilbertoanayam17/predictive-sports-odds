@@ -19,7 +19,7 @@ import streamlit as st
 
 from predictive_odds.backtester import BacktestConfig, Backtester, BacktestResult
 from predictive_odds.bet_tracker import BetTracker, TrackerError
-from predictive_odds.config import LEAGUES, ConfigurationError, get_league
+from predictive_odds.config import LEAGUES, ConfigurationError, current_season, get_league
 from predictive_odds.connectivity import API_FOOTBALL_SIGNUP, ODDS_API_SIGNUP, check_all
 from predictive_odds.data_fetcher import (
     ApiFootballProvider,
@@ -138,6 +138,24 @@ def run_slate(source: str, seed: int, leagues: tuple[str, ...], season: int, ban
     return analyze_slate(build_fetcher(source, seed, seasons, odds_key, af_key, leagues[0]), list(leagues), config)
 
 
+def settle_pending(tracker: BetTracker, source: str, seed: int, league_key: str, season: int,
+                   odds_key: str, af_key: str) -> int:
+    """Liquida las apuestas pendientes con los resultados de la temporada.
+
+    Returns:
+        Número de apuestas liquidadas.
+    """
+    fetcher = build_fetcher(source, seed, (season - 1, season), odds_key or "sin-clave", af_key, league_key)
+    league = get_league(league_key)
+    results = fetcher.history_provider.fetch_matches(league, season)
+    if fetcher.fixtures_provider is not fetcher.history_provider:  # API-Football: resultados más recientes
+        try:
+            results = pd.concat([results, fetcher.fixtures_provider.fetch_matches(league, season)], ignore_index=True)
+        except DataFetchError:
+            pass
+    return tracker.settle(results)
+
+
 def show_backtest(bt: BacktestResult) -> None:
     """Muestra las métricas, la curva de bankroll y la calibración de un backtest."""
     m = bt.metrics
@@ -193,7 +211,9 @@ def main() -> None:
         source = st.radio("Fuente", ["Simulada", "Real"], horizontal=True,
                           help="Real: histórico de football-data.co.uk + momios de The Odds API")
         league_key = st.selectbox("Liga", list(LEAGUES), format_func=lambda k: LEAGUES[k].name)
-        season = int(st.number_input("Temporada actual", 2015, 2030, 2025))
+        season = int(st.number_input("Temporada actual", 2015, 2035, current_season(),
+                                     help="Año de inicio de la temporada en curso (2026 = 2026/27). "
+                                          "Se entrena con esta y la anterior."))
         seed = int(st.number_input("Semilla (simulación)", 0, 10_000, 7)) if source == "Simulada" else 0
         odds_key = af_key = ""
         if source == "Real":
@@ -248,6 +268,11 @@ def main() -> None:
     except (DataFetchError, InsufficientDataError) as exc:
         st.error(f"No se pudieron obtener datos suficientes: {exc}")
         st.stop()
+
+    if result.unknown_teams:
+        st.warning(f"Sin historial: **{', '.join(result.unknown_teams)}**. El modelo les asigna fuerza promedio, "
+                   "así que sus predicciones son poco fiables. Si acaban de ascender, es normal al inicio de la "
+                   f"temporada; si no, revisa que *Temporada actual* sea {current_season()}.")
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Partidos analizados", len(result.predictions))
@@ -328,9 +353,21 @@ def main() -> None:
     with tabs[5]:
         try:
             with BetTracker(db_path) as tracker:
-                if st.button("Registrar las apuestas sugeridas"):
+                st.caption(f"Archivo del registro: `{os.path.abspath(db_path)}`. Registrar no coloca apuestas: "
+                           "sirve para hacer seguimiento (o *paper trading*). Volver a registrar no duplica.")
+                b1, b2 = st.columns(2)
+                if b1.button("Registrar las apuestas sugeridas"):
                     new = tracker.record_analysis(result.value_bets, result.parlays, result.bankroll)
                     st.success(f"{new} apuesta(s) nueva(s) registrada(s).")
+                if b2.button("Liquidar con resultados", help="Busca los resultados de los partidos ya jugados"):
+                    try:
+                        with st.spinner("Descargando resultados…"):
+                            settled = settle_pending(tracker, source, seed, league_key, season, odds_key, af_key)
+                        st.success(f"{settled} apuesta(s) liquidada(s).") if settled else st.info(
+                            "No hay apuestas pendientes con resultado disponible todavía. football-data.co.uk "
+                            "suele publicar los resultados 1-2 días después del partido.")
+                    except (DataFetchError, AuthenticationError) as exc:
+                        st.error(f"No se pudieron obtener resultados: {exc}")
                 summary = tracker.summary(initial_bankroll=bankroll)
                 s1, s2, s3, s4 = st.columns(4)
                 s1.metric("Apuestas", int(summary["apuestas"]))

@@ -8,6 +8,7 @@ los identificadores que usa cada proveedor de datos. El resto del sistema
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Literal
 
 
@@ -128,3 +129,19 @@ def register_league(config: LeagueConfig, *, overwrite: bool = False) -> None:
     if key in LEAGUES and not overwrite:
         raise ConfigurationError(f"La liga '{key}' ya está registrada")
     LEAGUES[key] = config
+
+
+def current_season(today: date | None = None) -> int:
+    """Año de inicio de la temporada en curso (julio en adelante = temporada nueva).
+
+    Las ligas europeas arrancan en agosto y la Liga MX (Apertura) en julio, así
+    que en noviembre de 2026 la temporada actual es la 2026/27 → ``2026``.
+
+    Args:
+        today: Fecha de referencia (por defecto, hoy).
+
+    Returns:
+        Año de inicio de la temporada.
+    """
+    d = today or date.today()
+    return d.year if d.month >= 7 else d.year - 1

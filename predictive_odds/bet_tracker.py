@@ -23,12 +23,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, Sequence
+from typing import Any, Iterator, Sequence
 
 import numpy as np
 import pandas as pd
 
 from .backtester import selection_result, selection_wins, settlement_pnl
+from .data_fetcher import TeamNameNormalizer
 from .domain import STATUS_FINISHED, Selection
 from .parlay_builder import Parlay, Pick, ValueBetFinder
 
@@ -79,12 +80,38 @@ def parse_selection_code(code: str) -> Selection:
 
 @dataclass(frozen=True)
 class Leg:
-    """Pata almacenada de una apuesta."""
+    """Pata almacenada de una apuesta.
+
+    ``home``/``away``/``kickoff`` permiten liquidar aunque la fuente de
+    resultados use otros IDs que la de momios (p. ej. The Odds API frente a
+    football-data.co.uk). En registros antiguos pueden faltar.
+    """
 
     match_id: str
     selection: str
     odds: float
     fixture: str
+    home: str = ""
+    away: str = ""
+    kickoff: str = ""
+
+    def teams(self) -> tuple[str, str]:
+        """``(local, visitante)``; si faltan, se deducen de ``fixture`` ("A vs B")."""
+        if self.home and self.away:
+            return self.home, self.away
+        parts = self.fixture.split(" vs ")
+        return (parts[0], parts[1]) if len(parts) == 2 else ("", "")
+
+
+def _kickoff(value: Any) -> str:
+    """Fecha de inicio en ISO (cadena vacía si no se conoce)."""
+    if value is None:
+        return ""
+    try:
+        ts = pd.Timestamp(value)
+    except (ValueError, TypeError):
+        return ""
+    return "" if pd.isna(ts) else ts.isoformat()
 
 
 def _now() -> str:
@@ -160,7 +187,8 @@ class BetTracker:
         Returns:
             ID de la apuesta, o ``None`` si ya estaba registrada.
         """
-        leg = Leg(pick.match_id, selection_code(pick.selection), pick.odds, pick.fixture)
+        leg = Leg(pick.match_id, selection_code(pick.selection), pick.odds, pick.fixture,
+                  pick.home_team, pick.away_team, _kickoff(pick.kickoff))
         return self._insert("single", pick.league, pick.describe(), [leg], pick.odds, pick.model_prob, stake)
 
     def record_parlay(self, parlay: Parlay, stake: float) -> int | None:
@@ -173,7 +201,8 @@ class BetTracker:
         Returns:
             ID de la apuesta, o ``None`` si ya estaba registrada.
         """
-        legs = [Leg(l.match_id, selection_code(l.selection), l.odds, l.fixture) for l in parlay.legs]
+        legs = [Leg(l.match_id, selection_code(l.selection), l.odds, l.fixture, l.home_team, l.away_team,
+                    _kickoff(l.kickoff)) for l in parlay.legs]
         desc = " + ".join(f"{l.fixture}: {l.selection.label}" for l in parlay.legs)
         league = parlay.legs[0].league if parlay.legs else ""
         return self._insert("parlay", league, desc, legs, parlay.combined_odds, parlay.joint_prob, stake)
@@ -215,7 +244,9 @@ class BetTracker:
         """Liquida las apuestas pendientes cuyos partidos ya terminaron.
 
         Args:
-            results: Partidos (esquema estándar); se usan los finalizados.
+            results: Partidos (esquema estándar); se usan los finalizados. Se
+                emparejan por ``match_id`` y, si no coincide (otra fuente de
+                datos), por equipos normalizados y fecha de inicio (±2 días).
 
         Returns:
             Número de apuestas liquidadas.
@@ -225,11 +256,43 @@ class BetTracker:
             str(mid): (int(float(hg)), int(float(ag)))
             for mid, hg, ag in zip(done["match_id"], done["home_goals"], done["away_goals"])
         }
+        # Índice por equipos para cuando los IDs de momios y resultados no coinciden.
+        norm = TeamNameNormalizer()
+        by_teams: dict[tuple[str, str], list[tuple[pd.Timestamp, tuple[int, int]]]] = {}
+        dates = pd.to_datetime(done["date"], utc=True, errors="coerce") if "date" in done else pd.Series(dtype=object)
+        if "date" in done:
+            for h, a, d, hg, ag in zip(done["home_team"], done["away_team"], dates,
+                                       done["home_goals"], done["away_goals"]):
+                by_teams.setdefault((norm.key(str(h)), norm.key(str(a))), []).append(
+                    (d, (int(float(hg)), int(float(ag)))))
+
+        result_teams = sorted(set(done["home_team"].astype(str)) | set(done["away_team"].astype(str))) \
+            if "home_team" in done else []
+
+        def find(leg: Leg, created_at: str) -> tuple[int, int] | None:
+            """Marcador de una pata: por ID y, si no, por equipos + fecha (±2 días)."""
+            if leg.match_id in scores:
+                return scores[leg.match_id]
+            home, away = leg.teams()
+            home = norm.match(home, result_teams) or home  # "Hull City" (momios) ↔ "Hull" (resultados)
+            away = norm.match(away, result_teams) or away
+            candidates = by_teams.get((norm.key(home), norm.key(away)), [])
+            if leg.kickoff:
+                ref = pd.Timestamp(leg.kickoff)
+                ref = ref.tz_localize("UTC") if ref.tzinfo is None else ref
+                close = [sc for d, sc in candidates if pd.notna(d) and abs((d - ref).days) <= 2]
+            else:  # registros antiguos: primer partido entre ambos tras registrar la apuesta
+                since = pd.Timestamp(created_at) - pd.Timedelta(days=1)
+                close = [sc for d, sc in sorted(candidates, key=lambda c: c[0]) if pd.notna(d) and d >= since][:1]
+            return close[0] if len(close) == 1 else None
+
         settled = 0
         for row in self._rows("WHERE status = 'pending'"):
             legs = self._legs(row)
-            if not all(l.match_id in scores for l in legs):
+            found = {l.match_id: find(l, row["created_at"]) for l in legs}
+            if any(v is None for v in found.values()):
                 continue
+            scores.update({k: v for k, v in found.items() if v is not None})
             try:
                 if len(legs) == 1:  # sencilla: admite push y medios resultados (DNB/AH)
                     result = selection_result(parse_selection_code(legs[0].selection), *scores[legs[0].match_id])

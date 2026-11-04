@@ -99,6 +99,15 @@ python main.py --live --league EPL --tune        # hiperparámetros con validaci
 
 ## 6. Registro de apuestas
 
+**Desde la app** (pestaña *Registro*):
+1. Tras analizar la jornada, pulsa **Registrar las apuestas sugeridas**. Se guardan en el archivo SQLite que indica la barra lateral (por defecto `bets.sqlite` en la carpeta del proyecto). Registrar no coloca apuestas y volver a registrar no duplica.
+2. Cuando se hayan jugado los partidos, pulsa **Liquidar con resultados**. football-data.co.uk suele publicar los resultados 1-2 días después; con clave de API-Football llegan antes.
+3. La misma pestaña muestra el beneficio, el ROI, el historial y la curva de bankroll.
+
+Las apuestas se emparejan con los resultados aunque cada fuente use IDs y nombres distintos ("Hull City" en los momios, "Hull" en los resultados), por equipos y fecha de inicio.
+
+**Desde la terminal:**
+
 ```bash
 python main.py --live --league EPL --track data/bets.sqlite                    # registrar sugerencias
 python main.py --live --league EPL --track data/bets.sqlite --settle \\

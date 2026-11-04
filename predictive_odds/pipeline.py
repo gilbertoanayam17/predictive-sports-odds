@@ -114,6 +114,8 @@ class AnalysisResult:
         team_ratings: Ratings del modelo de Poisson.
         adjustments: Ajustes por lesiones aplicados (equipo → ajuste).
         odds: Momios usados (enlazados a los partidos), p. ej. para guardar snapshots.
+        unknown_teams: Equipos de los próximos partidos sin historial (recién
+            ascendidos o temporada mal elegida): el modelo les asigna fuerza promedio.
     """
 
     league: str
@@ -129,6 +131,7 @@ class AnalysisResult:
     team_ratings: pd.DataFrame
     adjustments: dict[str, TeamAdjustment] = field(default_factory=dict)
     odds: pd.DataFrame = field(default_factory=pd.DataFrame)
+    unknown_teams: list[str] = field(default_factory=list)
 
     def predictions_frame(self) -> pd.DataFrame:
         """Tabla de predicciones por partido."""
@@ -380,6 +383,7 @@ class AnalysisPipeline:
             parlays=parlays, evaluation=self.evaluate_models(history) if evaluate else {},
             team_ratings=ratings[ratings["team"].isin(set(known))].reset_index(drop=True), adjustments=adjustments,
             odds=odds,
+            unknown_teams=sorted(set(fixtures["home_team"]).union(fixtures["away_team"]) - set(known)),
         )
 
 

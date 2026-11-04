@@ -165,6 +165,11 @@ def test_team_name_normalizer() -> None:
     assert n.match("U.N.A.M.", known) == "Pumas UNAM"
     assert n.match("Atlético de San Luis", known) == "Atletico San Luis"
     assert n.match("Real Madrid", known) is None
+    promoted = ["Hull", "Ipswich", "Coventry", "Man United", "Man City"]
+    assert n.match("Hull City", promoted) == "Hull"
+    assert n.match("Ipswich Town", promoted) == "Ipswich"
+    assert n.match("Coventry City", promoted) == "Coventry"
+    assert n.match("Manchester", ["Manchester United", "Manchester City"]) is None  # ambiguo
 
 
 def test_link_odds_and_fixtures_from_odds() -> None:
