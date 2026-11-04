@@ -226,8 +226,13 @@ def main() -> None:
             if st.button("Probar conexión", help="No consume créditos"):
                 with st.spinner("Comprobando fuentes…"):
                     for chk in check_all(odds_key, af_key, league_key, season):
-                        (st.success if chk.ok else st.error if chk.required else st.warning)(
-                            f"**{chk.service}**: {chk.message}")
+                        text = f"**{chk.service}**: {chk.message}"
+                        if chk.ok:
+                            st.success(text)
+                        elif chk.required:
+                            st.error(text)
+                        else:
+                            st.warning(text)
         st.header("Modelo y apuestas")
         bankroll = float(st.number_input("Bankroll", 10.0, 1e7, 1000.0, step=100.0))
         use_ml = st.toggle("Ensamble con ML", value=True)
@@ -363,9 +368,11 @@ def main() -> None:
                     try:
                         with st.spinner("Descargando resultados…"):
                             settled = settle_pending(tracker, source, seed, league_key, season, odds_key, af_key)
-                        st.success(f"{settled} apuesta(s) liquidada(s).") if settled else st.info(
-                            "No hay apuestas pendientes con resultado disponible todavía. football-data.co.uk "
-                            "suele publicar los resultados 1-2 días después del partido.")
+                        if settled:
+                            st.success(f"{settled} apuesta(s) liquidada(s).")
+                        else:
+                            st.info("No hay apuestas pendientes con resultado disponible todavía. football-data.co.uk "
+                                    "suele publicar los resultados 1-2 días después del partido.")
                     except (DataFetchError, AuthenticationError) as exc:
                         st.error(f"No se pudieron obtener resultados: {exc}")
                 summary = tracker.summary(initial_bankroll=bankroll)

@@ -1,0 +1,3 @@
+[runner]
+# Sin "magic": evita que Streamlit muestre o reinterprete expresiones sueltas.
+magicEnabled = false

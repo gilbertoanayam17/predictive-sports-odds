@@ -57,3 +57,17 @@ def test_app_settle_button(tmp_path: Path) -> None:
     assert not at.exception, at.exception
     # En la simulación la jornada aún no se jugó: no hay nada que liquidar todavía
     assert any("pendientes" in i.value for i in at.info)
+
+
+def test_app_connection_button_without_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """El botón 'Probar conexión' muestra un mensaje por fuente sin romper la app (red simulada caída)."""
+    import predictive_odds.connectivity as conn
+
+    monkeypatch.setattr(conn, "check_all", lambda *a, **k: [
+        conn.ConnectionCheck("A", True, "ok"), conn.ConnectionCheck("B", False, "mal"),
+        conn.ConnectionCheck("C", False, "opcional", required=False)])
+    at = AppTest.from_file(APP, default_timeout=120)
+    at.run()
+    at.radio[0].set_value("Real").run()
+    next(b for b in at.button if b.label == "Probar conexión").click().run()
+    assert not at.exception, at.exception
