@@ -182,6 +182,11 @@ def print_report(result: AnalysisResult, simulated: bool) -> None:
         for note in rep.notes:
             print(f"   • {note}")
 
+    if result.adjustments:
+        print("\nAjustes por lesiones aplicados:")
+        for team, adj in result.adjustments.items():
+            print(f"   • {team}: ataque x{adj.attack:.2f}, goles recibidos x{adj.defense:.2f} — {adj.reason}")
+
     section(f"5. APUESTAS DE VALOR (sencillas) — bankroll {result.bankroll:,.0f}")
     vb = result.value_bets_frame()
     show(vb.head(15), "Ninguna selección supera el umbral de valor.")

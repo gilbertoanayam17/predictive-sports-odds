@@ -990,6 +990,11 @@ class SimulationConfig:
         bookmaker_noise: Error de estimación de cada casa (log-escala).
         closing_noise: Error de la línea de cierre (mercado más eficiente).
         closing_margin: Margen de la línea de cierre.
+        injury_rate: Probabilidad de que un equipo tenga bajas en la próxima jornada.
+        injury_max_players: Máximo de bajas por equipo.
+        injury_attack_effect: Pérdida real de ataque por baja.
+        injury_defense_effect: Aumento real de goles recibidos por baja.
+        injury_doubtful_prob: Fracción de bajas reportadas como duda (juegan el 50%).
         ou_lines: Líneas de Over/Under cotizadas.
     """
 
@@ -1007,6 +1012,11 @@ class SimulationConfig:
     bookmaker_noise: float = 0.07
     closing_noise: float = 0.03
     closing_margin: float = 0.025
+    injury_rate: float = 0.35
+    injury_max_players: int = 3
+    injury_attack_effect: float = 0.04
+    injury_defense_effect: float = 0.025
+    injury_doubtful_prob: float = 0.3
     ou_lines: tuple[float, ...] = (1.5, 2.5, 3.5)
 
 
@@ -1140,7 +1150,8 @@ class SimulatedDataProvider(ResultsProvider, OddsProvider):
         return df.copy()
 
     def _odds_rows(self, league: LeagueConfig, season: int, matches: pd.DataFrame,
-                   books: Sequence[tuple[str, float, float]]) -> list[dict[str, Any]]:
+                   books: Sequence[tuple[str, float, float]],
+                   multipliers: Mapping[str, tuple[float, float]] | None = None) -> list[dict[str, Any]]:
         """Genera filas de momios para un conjunto de partidos.
 
         Args:
@@ -1148,6 +1159,7 @@ class SimulatedDataProvider(ResultsProvider, OddsProvider):
             season: Temporada (para las fuerzas verdaderas).
             matches: Partidos a cotizar.
             books: Tuplas ``(casa, ruido, margen)``.
+            multipliers: ``equipo -> (mult_ataque, mult_defensa)`` (lesiones), que las casas conocen.
 
         Returns:
             Filas en el esquema ``ODDS_COLUMNS`` (sin validar).
@@ -1162,6 +1174,10 @@ class SimulatedDataProvider(ResultsProvider, OddsProvider):
         rows: list[dict[str, Any]] = []
         for m in matches.itertuples(index=False):
             lh, la = self.true_lambdas(league, season, str(m.home_team), str(m.away_team))
+            if multipliers:
+                ah, dh = multipliers.get(str(m.home_team), (1.0, 1.0))
+                aa, da = multipliers.get(str(m.away_team), (1.0, 1.0))
+                lh, la = lh * ah * da, la * aa * dh
             for book, noise, margin in books:
                 rng = self._rng(league.key, "odds", book, str(m.match_id))
                 blh = lh * np.exp(rng.normal(0, noise))
@@ -1188,7 +1204,38 @@ class SimulatedDataProvider(ResultsProvider, OddsProvider):
         if upcoming.empty:
             return empty_odds()
         upcoming = upcoming[upcoming["date"] == upcoming["date"].min()]
-        return validate_odds(pd.DataFrame(self._odds_rows(league, season, upcoming, self._books())))
+        rows = self._odds_rows(league, season, upcoming, self._books(), self.injury_multipliers(league))
+        return validate_odds(pd.DataFrame(rows))
+
+    def _injury_list(self, league: LeagueConfig) -> list[tuple[str, str, str]]:
+        """Bajas simuladas de la próxima jornada: ``(equipo, jugador, tipo)``."""
+        rng = self._rng(league.key, "injuries")
+        out: list[tuple[str, str, str]] = []
+        for team in league.sample_teams:
+            if rng.uniform() < self.config.injury_rate:
+                for k in range(int(rng.integers(1, self.config.injury_max_players + 1))):
+                    kind = "Questionable" if rng.uniform() < self.config.injury_doubtful_prob else "Missing Fixture"
+                    out.append((team, f"{team} Jugador {k + 1}", kind))
+        return out
+
+    def injury_multipliers(self, league: LeagueConfig) -> dict[str, tuple[float, float]]:
+        """Efecto REAL (esperado) de las bajas simuladas: ``equipo -> (mult_ataque, mult_defensa)``.
+
+        Una duda juega con probabilidad 0.5, por lo que cuenta la mitad.
+
+        Args:
+            league: Liga.
+
+        Returns:
+            Multiplicadores por equipo con bajas.
+        """
+        c = self.config
+        acc: dict[str, tuple[float, float]] = {}
+        for team, _player, kind in self._injury_list(league):
+            w = 0.5 if kind == "Questionable" else 1.0
+            a, d = acc.get(team, (1.0, 1.0))
+            acc[team] = (a - w * c.injury_attack_effect, d + w * c.injury_defense_effect)
+        return acc
 
     def fetch_historical_odds(self, league: LeagueConfig, season: int, include_closing: bool = True) -> pd.DataFrame:
         """Momios pre-partido de los partidos ya jugados (para backtesting).
@@ -1210,8 +1257,10 @@ class SimulatedDataProvider(ResultsProvider, OddsProvider):
         return validate_odds(pd.DataFrame(self._odds_rows(league, season, played, books)))
 
     def fetch_injuries(self, league: LeagueConfig, season: int) -> pd.DataFrame:
-        """Sin lesiones en la simulación: devuelve un DataFrame vacío."""
-        return pd.DataFrame(columns=["team", "player", "type", "reason", "match_id"])
+        """Bajas simuladas de la próxima jornada (afectan a la verdad y a los momios)."""
+        rows = [{"team": t, "player": p, "type": k, "reason": "simulada", "match_id": None}
+                for t, p, k in self._injury_list(league)]
+        return pd.DataFrame(rows, columns=["team", "player", "type", "reason", "match_id"])
 
 
 # =============================================================================

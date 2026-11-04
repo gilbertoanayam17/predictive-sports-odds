@@ -35,6 +35,7 @@ predictive_odds/
 ├── backtester.py          # Backtest walk-forward con CLV contra la línea de cierre
 ├── calibration.py         # Calibración isotónica/Platt, ECE y tabla de fiabilidad
 ├── model_store.py         # Guardar/cargar modelos entrenados (joblib + metadatos)
+├── injuries.py            # Bajas → multiplicadores de ataque/defensa sobre λ
 └── pipeline.py            # AnalysisPipeline.run() → AnalysisResult (DataFrames listos para UI)
 main.py                    # Demo de punta a punta en la terminal
 ```
@@ -72,6 +73,9 @@ Walk-forward fecha a fecha: reentrena solo con el pasado, apuesta con los momios
 
 Hallazgo medido (simulación, 4 semillas): con el modelo puro, el EV esperado medio de los picks era ≈18% y el real ≈3.8%. Encoger la probabilidad al 50% hacia el mercado sube el EV real a 5.3% y el CLV de 2.6% a 4.0%; limitar los momios a ≤ 4 empeora. Por eso el valor por defecto es `value_model_weight=0.5`. Los parlays del backtest rinden peor que las sencillas, como era de esperar por la varianza y el error compuesto del modelo.
 
+### Lesiones (`injuries.py`)
+Las bajas (API-Football o simuladas) se traducen en multiplicadores de ataque y defensa que modifican las λ de Poisson. Como el ML no conoce ese contexto, sus probabilidades se corrigen en la misma proporción. Medido en la simulación (20 jornadas con bajas que las casas sí descuentan), el EV real de los value bets sube de 6.3% a 6.5%, y de 5.7% a 6.1% en los partidos con bajas. La mejora es moderada porque el encogimiento hacia el mercado ya absorbía parte del efecto. Activado por defecto (`use_injuries=True`).
+
 ### Calibración y persistencia
 - `python main.py --model-path models/epl.joblib` reutiliza los modelos guardados mientras no tengan más de 7 días de antigüedad respecto al último partido, y los guarda al reentrenar (escritura atómica, metadatos en `.json`). Solo se deben cargar bundles propios, porque joblib usa pickle.
 - `ProbabilityCalibrator` (isotónico o Platt, por mercado) se ajusta sobre las selecciones evaluadas fuera de muestra en un backtest. **Está desactivado por defecto:** en la validación simulada no mejoró el Brier (0.2054 → 0.2059–0.2070), porque el modelo ya está bien calibrado. Con datos reales hay que medirlo con `calibration_report(backtest.evaluated)`.
@@ -91,7 +95,7 @@ st.dataframe(result.parlays_frame())
 ```
 
 ## Limitaciones y próximos pasos
-- Las **lesiones** se descargan pero todavía no ajustan las λ; por ahora la protección es el filtro de discrepancia con el mercado.
+- Las **lesiones** se convierten en ajustes con una heurística (3% de ataque y 2% de defensa por baja; las dudas cuentan a medias; tope del 15%). Para mejorarlo hacen falta datos de importancia por jugador (`PlayerImpact`), como minutos o goles+asistencias.
 - **UCL:** los equipos de ligas distintas no tienen historial compartido. Falta un modelo multiliga con un coeficiente de fuerza por liga.
 - Los momios de un parlay del mismo partido se calculan como producto; un *Bet Builder* real los ajusta por correlación (el sistema lo avisa).
 - Scrapers de xG (Understat) como un `ResultsProvider` más.

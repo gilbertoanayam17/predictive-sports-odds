@@ -541,6 +541,41 @@ class FeatureEngineer:
 
 
 # =============================================================================
+# Ajustes de contexto (lesiones, rotaciones...)
+# =============================================================================
+@dataclass(frozen=True)
+class TeamAdjustment:
+    """Multiplicadores de contexto sobre la fuerza de un equipo.
+
+    Attributes:
+        attack: Multiplicador de los goles que marca (0.9 = −10%).
+        defense: Multiplicador de los goles que recibe (1.1 = recibe 10% más).
+        reason: Descripción legible del ajuste.
+    """
+
+    attack: float = 1.0
+    defense: float = 1.0
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        """Valida que los multiplicadores sean positivos y razonables.
+
+        Raises:
+            ValueError: Si algún multiplicador está fuera de (0, 3].
+        """
+        if not (0 < self.attack <= 3 and 0 < self.defense <= 3):
+            raise ValueError(f"Multiplicadores fuera de rango: {self.attack}, {self.defense}")
+
+    @property
+    def is_neutral(self) -> bool:
+        """Indica si el ajuste no cambia nada."""
+        return abs(self.attack - 1) < 1e-12 and abs(self.defense - 1) < 1e-12
+
+
+NEUTRAL_ADJUSTMENT = TeamAdjustment()
+
+
+# =============================================================================
 # Poisson / Dixon-Coles
 # =============================================================================
 @dataclass
@@ -727,7 +762,9 @@ class PoissonModel:
         return mat / mat.sum()
 
     def predict(self, home: str, away: str, match_id: str = "", neutral: bool = False,
-                league: str = "", kickoff: pd.Timestamp | None = None) -> MatchPrediction:
+                league: str = "", kickoff: pd.Timestamp | None = None,
+                home_adj: TeamAdjustment = NEUTRAL_ADJUSTMENT,
+                away_adj: TeamAdjustment = NEUTRAL_ADJUSTMENT) -> MatchPrediction:
         """Predicción completa de un partido.
 
         Args:
@@ -737,11 +774,15 @@ class PoissonModel:
             neutral: Campo neutral.
             league: Liga.
             kickoff: Fecha/hora.
+            home_adj: Ajuste de contexto del local (p. ej. lesiones).
+            away_adj: Ajuste de contexto del visitante.
 
         Returns:
             :class:`MatchPrediction` con la matriz de marcadores.
         """
         lh, la = self.expected_goals(home, away, neutral)
+        lh *= home_adj.attack * away_adj.defense
+        la *= away_adj.attack * home_adj.defense
         return MatchPrediction(match_id or f"{home}-{away}", home, away, lh, la,
                                self.score_matrix(lh, la), league=league, kickoff=kickoff)
 
@@ -892,8 +933,14 @@ class EnsemblePredictor:
 
     def predict(self, home: str, away: str, match_id: str = "", league: str = "",
                 kickoff: pd.Timestamp | None = None, season: int | None = None,
-                neutral: bool = False, features: Mapping[str, float] | None = None) -> MatchPrediction:
+                neutral: bool = False, features: Mapping[str, float] | None = None,
+                home_adj: TeamAdjustment = NEUTRAL_ADJUSTMENT,
+                away_adj: TeamAdjustment = NEUTRAL_ADJUSTMENT) -> MatchPrediction:
         """Predicción de un partido combinando modelos.
+
+        Los ajustes de contexto (lesiones) modifican las λ de Poisson. Como el
+        ML no conoce ese contexto, sus probabilidades se corrigen con la misma
+        razón ``P_poisson_ajustada / P_poisson_base`` y se renormalizan.
 
         Args:
             home: Local.
@@ -904,13 +951,21 @@ class EnsemblePredictor:
             season: Temporada (para las features).
             neutral: Campo neutral.
             features: Features precalculadas (si no, se piden al ``feature_engineer``).
+            home_adj: Ajuste de contexto del local.
+            away_adj: Ajuste de contexto del visitante.
 
         Returns:
             Predicción con ``sources`` = {"poisson", "ml"} y ``overrides`` del ensamble.
         """
-        pred = self.poisson.predict(home, away, match_id, neutral, league, kickoff)
+        pred = self.poisson.predict(home, away, match_id, neutral, league, kickoff, home_adj, away_adj)
         poisson_probs = {s: pred.matrix_probability(s) for sels in ML_SELECTIONS.values() for s in sels}
         pred.sources["poisson"] = poisson_probs
+        adjusted = not (home_adj.is_neutral and away_adj.is_neutral)
+        ratio: dict[Selection, float] = {s: 1.0 for s in poisson_probs}
+        if adjusted:
+            base = self.poisson.predict(home, away, match_id, neutral, league, kickoff)
+            ratio = {s: p / max(base.matrix_probability(s), 1e-9) for s, p in poisson_probs.items()}
+            pred.sources["poisson_sin_ajuste"] = {s: base.matrix_probability(s) for s in poisson_probs}
         if self.ml is None or self.ml_weight == 0.0:
             return pred
         if features is None:
@@ -922,6 +977,12 @@ class EnsemblePredictor:
         except (ValueError, KeyError) as exc:
             logger.warning("ML falló para %s vs %s (%s); se usa solo Poisson", home, away, exc)
             return pred
+        if adjusted:
+            corrected: dict[Selection, float] = {}
+            for sels in ML_SELECTIONS.values():
+                raw = np.array([ml_probs[s] * ratio[s] for s in sels])
+                corrected.update({s: float(v) for s, v in zip(sels, raw / raw.sum())})
+            ml_probs = corrected
         pred.sources["ml"] = ml_probs
         w = self.ml_weight
         for sels in ML_SELECTIONS.values():
@@ -964,5 +1025,5 @@ def evaluate_predictions(probs: np.ndarray, outcomes: np.ndarray) -> dict[str, f
 __all__ = [
     "EloRatingSystem", "EnsemblePredictor", "FEATURE_COLUMNS", "FeatureEngineer", "FormSummary", "H2HSummary",
     "HeuristicAnalyzer", "InsufficientDataError", "MLOutcomeModel", "MatchReport", "ModelNotFittedError",
-    "PoissonModel", "PoissonModelConfig", "TeamSnapshot", "evaluate_predictions", "Market",
+    "PoissonModel", "PoissonModelConfig", "TeamAdjustment", "NEUTRAL_ADJUSTMENT", "TeamSnapshot", "evaluate_predictions", "Market",
 ]

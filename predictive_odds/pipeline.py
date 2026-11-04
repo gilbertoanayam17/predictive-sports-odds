@@ -17,6 +17,7 @@ import pandas as pd
 from .calibration import ProbabilityCalibrator
 from .data_fetcher import DataFetcher, DataFetchError
 from .domain import STATUS_FINISHED, MatchPrediction, Selection
+from .injuries import InjuryAdjuster, InjuryImpactConfig
 from .model_store import BundleMetadata, ModelBundle, ModelStoreError, load_bundle, save_bundle
 from .parlay_builder import (
     Parlay,
@@ -36,7 +37,9 @@ from .statistical_models import (
     MLOutcomeModel,
     PoissonModel,
     PoissonModelConfig,
+    TeamAdjustment,
     evaluate_predictions,
+    NEUTRAL_ADJUSTMENT,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,6 +63,8 @@ class PipelineConfig:
         model_path: Si se indica, se reutiliza el bundle guardado mientras no
             esté desactualizado y se guarda tras cada reentrenamiento.
         max_model_age_days: Antigüedad máxima del bundle respecto al último partido.
+        use_injuries: Si se ajustan las λ por lesiones/bajas reportadas.
+        injury: Parámetros de la heurística de lesiones.
         calibrator: Calibrador opcional (ajustado, p. ej., sobre un backtest).
             Desactivado por defecto: en la validación simulada no mejoró el Brier.
     """
@@ -77,6 +82,8 @@ class PipelineConfig:
     model_path: str | None = None
     max_model_age_days: int = 7
     calibrator: ProbabilityCalibrator | None = None
+    use_injuries: bool = True
+    injury: InjuryImpactConfig = field(default_factory=InjuryImpactConfig)
 
 
 @dataclass
@@ -95,6 +102,7 @@ class AnalysisResult:
         parlays: Parlays sugeridos (stakes tras tope de exposición).
         evaluation: Métricas de validación fuera de muestra por modelo.
         team_ratings: Ratings del modelo de Poisson.
+        adjustments: Ajustes por lesiones aplicados (equipo → ajuste).
     """
 
     league: str
@@ -108,6 +116,7 @@ class AnalysisResult:
     parlays: list[Parlay]
     evaluation: dict[str, dict[str, float]]
     team_ratings: pd.DataFrame
+    adjustments: dict[str, TeamAdjustment] = field(default_factory=dict)
 
     def predictions_frame(self) -> pd.DataFrame:
         """Tabla de predicciones por partido."""
@@ -239,22 +248,46 @@ class AnalysisPipeline:
         return result
 
     # --------------------------------------------------------------------- run
-    def predict_fixtures(self, fixtures: pd.DataFrame, ensemble: EnsemblePredictor) -> dict[str, MatchPrediction]:
+    def predict_fixtures(self, fixtures: pd.DataFrame, ensemble: EnsemblePredictor,
+                         adjustments: dict[str, TeamAdjustment] | None = None) -> dict[str, MatchPrediction]:
         """Predice cada partido del calendario.
 
         Args:
             fixtures: Partidos programados.
             ensemble: Ensamble entrenado.
+            adjustments: Ajustes de contexto por equipo (lesiones).
 
         Returns:
             Predicciones por ``match_id``.
         """
+        adj = adjustments or {}
         preds: dict[str, MatchPrediction] = {}
         for _, f in fixtures.iterrows():
             season = int(f["season"]) if pd.notna(f["season"]) else None
             preds[str(f["match_id"])] = ensemble.predict(
-                f["home_team"], f["away_team"], str(f["match_id"]), str(f["league"]), f["date"], season)
+                f["home_team"], f["away_team"], str(f["match_id"]), str(f["league"]), f["date"], season,
+                home_adj=adj.get(f["home_team"], NEUTRAL_ADJUSTMENT),
+                away_adj=adj.get(f["away_team"], NEUTRAL_ADJUSTMENT))
         return preds
+
+    def injury_adjustments(self, known_teams: list[str]) -> dict[str, TeamAdjustment]:
+        """Descarga las bajas y las convierte en ajustes (vacío si no hay datos).
+
+        Args:
+            known_teams: Equipos del histórico (para alinear nombres).
+
+        Returns:
+            Ajustes por equipo.
+        """
+        c = self.config
+        if not c.use_injuries:
+            return {}
+        try:
+            injuries = self.fetcher.get_injuries(c.league_key, max(c.seasons))
+        except DataFetchError as exc:
+            logger.warning("No se pudieron obtener lesiones: %s", exc)
+            return {}
+        return InjuryAdjuster(c.injury, self.fetcher.normalizer).adjustments(injuries, known_teams)
 
     def run(self, evaluate: bool = True) -> AnalysisResult:
         """Ejecuta el análisis completo.
@@ -286,7 +319,8 @@ class AnalysisPipeline:
             odds = self.fetcher.link_odds_to_fixtures(odds, fixtures)
 
         ensemble = self.get_models(history)
-        predictions = self.predict_fixtures(fixtures, ensemble)
+        adjustments = self.injury_adjustments([str(t) for t in known])
+        predictions = self.predict_fixtures(fixtures, ensemble, adjustments)
         if c.calibrator is not None:
             predictions = {mid: c.calibrator.calibrate_prediction(p) for mid, p in predictions.items()}
 
@@ -303,5 +337,5 @@ class AnalysisPipeline:
             league=c.league_key, bankroll=c.bankroll, standings=analyzer.standings(), fixtures=fixtures,
             predictions=predictions, reports=reports, all_picks=all_picks, value_bets=value_bets,
             parlays=parlays, evaluation=self.evaluate_models(history) if evaluate else {},
-            team_ratings=ensemble.poisson.team_ratings(),
+            team_ratings=ensemble.poisson.team_ratings(), adjustments=adjustments,
         )
