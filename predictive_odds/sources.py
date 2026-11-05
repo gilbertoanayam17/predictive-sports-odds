@@ -58,19 +58,41 @@ def make_fetcher(live: bool, league_key: str, seasons: Sequence[int], odds_key: 
         sim = SimulatedDataProvider(SimulationConfig(seed=seed, seasons=tuple(seasons),
                                                      played_rounds_current=played_rounds))
         return DataFetcher(sim, odds_provider=sim)
-    league = get_league(league_key)
     odds = TheOddsApiProvider(odds_key.strip(), include_btts=include_btts)
     api_football = ApiFootballProvider(af_key.strip()) if af_key.strip() else None
-    history: ResultsProvider
-    if league.football_data_code:
-        history = FootballDataCoUkProvider()
-        if understat:
-            history = XgEnrichedProvider(history, UnderstatProvider())
-    elif api_football is not None:
-        history = api_football
-    else:
-        raise AuthenticationError(f"{league.name} requiere una clave de API-Football para el histórico")
+    history = make_history_provider(True, league_key, seasons, af_key, understat=understat)
     return DataFetcher(history, fixtures_provider=api_football or history, odds_provider=odds)
 
 
-__all__ = ["make_fetcher"]
+def make_history_provider(live: bool, league_key: str, seasons: Sequence[int], af_key: str = "", seed: int = 7,
+                          played_rounds: int = 28, understat: bool = False) -> ResultsProvider:
+    """Solo la fuente de resultados (para liquidar apuestas): no necesita la clave de momios ni gasta créditos.
+
+    Args:
+        live: Datos reales (``True``) o simulados.
+        league_key: Liga.
+        seasons: Temporadas (solo para la simulación).
+        af_key: Clave de API-Football, necesaria solo si la liga no está en football-data.co.uk.
+        seed: Semilla de la simulación.
+        played_rounds: Jornadas jugadas de la temporada actual en la simulación.
+        understat: Añadir xG de Understat (experimental).
+
+    Returns:
+        Proveedor con ``fetch_matches``.
+
+    Raises:
+        AuthenticationError: Si la liga necesita API-Football y no hay clave.
+    """
+    if not live:
+        return SimulatedDataProvider(SimulationConfig(seed=seed, seasons=tuple(seasons),
+                                                      played_rounds_current=played_rounds))
+    league = get_league(league_key)
+    if league.football_data_code:
+        history: ResultsProvider = FootballDataCoUkProvider()
+        return XgEnrichedProvider(history, UnderstatProvider()) if understat else history
+    if af_key.strip():
+        return ApiFootballProvider(af_key.strip())
+    raise AuthenticationError(f"{league.name} requiere una clave de API-Football para el histórico")
+
+
+__all__ = ["make_fetcher", "make_history_provider"]
