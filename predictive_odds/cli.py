@@ -49,7 +49,7 @@ from predictive_odds.performance import summarize
 from predictive_odds.report import save_report
 from predictive_odds.risk import RiskConfig, risk_table
 from predictive_odds.settings import load_env
-from predictive_odds.sources import make_fetcher
+from predictive_odds.sources import make_fetcher, make_history_provider
 from predictive_odds.tuning import tune_ml_weight, tune_poisson
 from predictive_odds.pipeline import AnalysisPipeline, AnalysisResult, PipelineConfig, SlateResult, analyze_slate
 
@@ -520,9 +520,9 @@ def run_weekly(args: argparse.Namespace) -> int:
     for key in leagues:  # 1. liquidar (sin gastar créditos)
         try:
             season = args.season if args.season and not args.live else season_for(key)
-            results = make_fetcher(args.live, key, (season - 1, season), seed=args.seed,
-                                   played_rounds=args.played_rounds).history_provider.fetch_matches(
-                                       get_league(key), season)
+            results = make_history_provider(args.live, key, (season - 1, season), os.environ.get("API_FOOTBALL_KEY", ""),
+                                            seed=args.seed, played_rounds=args.played_rounds).fetch_matches(
+                                                get_league(key), season)
             for path in (track, args.real_track):
                 with BetTracker(path) as tracker:
                     settled += tracker.settle(results)
