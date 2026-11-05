@@ -26,6 +26,7 @@ from dataclasses import dataclass, field, replace
 from typing import Literal, Mapping, Sequence
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from scipy.optimize import brentq
 
@@ -170,6 +171,10 @@ class Pick:
         model_prob: Probabilidad del modelo.
         market_prob: Probabilidad justa de consenso (sin margen), si se conoce.
         stake_fraction: Stake sugerido como fracción del bankroll.
+        decision_prob: Probabilidad usada para decidir el valor (modelo + mercado).
+        action_share: Fracción del stake en juego (1 − prob. de push); 1 en
+            mercados binarios. En DNB/hándicap asiático, ``model_prob`` es la
+            probabilidad efectiva ``W/(W+L)`` y el EV es ``s·(p·momio − 1)``.
     """
 
     match_id: str
@@ -183,6 +188,31 @@ class Pick:
     model_prob: float
     market_prob: float | None = None
     stake_fraction: float = 0.0
+    decision_prob: float | None = None
+    action_share: float = 1.0
+
+    def minimum_odds(self, min_edge: float = 0.04) -> float:
+        """Momio mínimo a partir del cual esta selección tiene valor (EV ajustado ≥ ``min_edge``).
+
+        Sirve para casas sin momios automáticos (p. ej. Caliente): si su precio es
+        mayor o igual que este, hay valor según el modelo encogido hacia el mercado.
+
+        Args:
+            min_edge: EV ajustado mínimo exigido.
+
+        Returns:
+            Momio decimal mínimo (``inf`` si la probabilidad es 0).
+        """
+        p = self.decision_prob if self.decision_prob is not None else self.model_prob
+        if p <= 0 or self.action_share <= 0:
+            return float("inf")
+        return (1.0 + min_edge / self.action_share) / p
+
+    @property
+    def adjusted_edge(self) -> float:
+        """EV por unidad con la probabilidad de decisión (modelo encogido hacia el mercado)."""
+        p = self.decision_prob if self.decision_prob is not None else self.model_prob
+        return self.action_share * expected_value(p, self.odds)
 
     @property
     def implied_prob(self) -> float:
@@ -191,8 +221,8 @@ class Pick:
 
     @property
     def edge(self) -> float:
-        """Valor esperado por unidad (``p·momio − 1``)."""
-        return expected_value(self.model_prob, self.odds)
+        """Valor esperado por unidad (``s·(p·momio − 1)``; ``s = 1`` en mercados binarios)."""
+        return self.action_share * expected_value(self.model_prob, self.odds)
 
     @property
     def fixture(self) -> str:
@@ -210,7 +240,8 @@ class Pick:
             "casa": self.bookmaker, "p_modelo": round(self.model_prob, 4),
             "p_implícita": round(self.implied_prob, 4),
             "p_mercado": round(self.market_prob, 4) if self.market_prob is not None else None,
-            "EV": round(self.edge, 4), "stake_%": round(100 * self.stake_fraction, 2),
+            "EV_modelo": round(self.edge, 4), "EV_ajustado": round(self.adjusted_edge, 4),
+            "stake_%": round(100 * self.stake_fraction, 2),
         }
         if bankroll is not None:
             d["stake"] = round(self.stake_fraction * bankroll, 2)
@@ -230,6 +261,14 @@ class ValueBetConfig:
             se supera suele indicar información que el modelo no tiene
             (lesiones, rotaciones) y el pick se descarta.
         devig_method: Método para quitar el margen.
+        allowed_markets: Mercados permitidos (``"1X2"``, ``"OU"``, ``"AH"``...); ``None`` = todos.
+            Lo fija el estudio por liga (:mod:`predictive_odds.league_study`).
+        value_model_weight: Peso del modelo en la probabilidad usada para
+            DECIDIR si hay valor (``w·p_modelo + (1−w)·p_mercado``). Con 1.0 se usa
+            el modelo puro; valores < 1 corrigen la "maldición del ganador"
+            (el filtro selecciona justo donde el modelo más se equivoca).
+            Backtest simulado (4 semillas): 0.5 sube el EV real de 3.8% a 5.3%
+            y el CLV de 2.6% a 4.0% frente a 1.0.
         kelly: Parámetros de staking.
     """
 
@@ -239,6 +278,8 @@ class ValueBetConfig:
     min_model_prob: float = 0.10
     max_market_gap: float = 0.15
     devig_method: Literal["multiplicative", "power"] = "power"
+    value_model_weight: float = 0.5
+    allowed_markets: tuple[str, ...] | None = None
     kelly: KellyConfig = field(default_factory=KellyConfig)
 
 
@@ -273,25 +314,62 @@ class ValueBetFinder:
         Returns:
             Mapa ``(match_id, selection) -> probabilidad justa``.
         """
-        acc: dict[tuple[str, Selection], list[float]] = {}
         if odds.empty:
             return {}
-        df = odds.assign(_line=odds["line"].fillna(-1.0))
-        for (mid, _book, market, _line), grp in df.groupby(["match_id", "bookmaker", "market", "_line"]):
-            size = MARKET_SIZE.get(Market(market))
-            grp = grp.drop_duplicates("selection")
-            if size is None or len(grp) != size:
-                continue
-            try:
-                fair = remove_margin(grp["odds"].tolist(), self.config.devig_method)
-            except ValueError as exc:
-                logger.debug("No se pudo quitar margen en %s: %s", mid, exc)
-                continue
-            for (_, row), p in zip(grp.iterrows(), fair):
-                sel = self._selection(row)
-                if sel is not None:
-                    acc.setdefault((str(mid), sel), []).append(p)
-        return {k: float(np.mean(v)) for k, v in acc.items()}
+        # Implementación vectorizada (numpy): es la parte más costosa del backtest.
+        market = odds["market"].astype(str).to_numpy()
+        outcome = odds["selection"].astype(str).to_numpy()
+        line = pd.to_numeric(odds["line"], errors="coerce").to_numpy(float)
+        price = pd.to_numeric(odds["odds"], errors="coerce").to_numpy(float)
+        # En el hándicap asiático las dos caras tienen líneas opuestas (local −0.5 / visitante +0.5):
+        # se agrupan por la línea vista desde el local.
+        away_ah = (market == Market.ASIAN_HANDICAP.value) & (outcome == "AWAY")
+        line_key = np.where(np.isnan(line), -1.0, np.where(away_ah, -line, line))
+        frame = pd.DataFrame({"mid": odds["match_id"].astype(str).to_numpy(), "book": odds["bookmaker"].astype(str).to_numpy(),
+                              "mkt": market, "lk": line_key, "sel": outcome, "line": line, "odds": price})
+        frame = frame[np.isfinite(frame["odds"].to_numpy()) & (frame["odds"].to_numpy() > 1.0)]
+        frame = frame.drop_duplicates(subset=["mid", "book", "mkt", "lk", "sel"])
+        if frame.empty:
+            return {}
+        codes, _ = pd.factorize(pd.MultiIndex.from_frame(frame[["mid", "book", "mkt", "lk"]]))
+        n_groups = int(codes.max()) + 1
+        sizes = np.bincount(codes, minlength=n_groups)
+        size_by_code = {mk.value: n for mk, n in MARKET_SIZE.items()}
+        expected = frame["mkt"].map(size_by_code).fillna(-1).to_numpy(int)
+        keep = sizes[codes] == expected
+        frame, codes = frame[keep], codes[keep]
+        if frame.empty:
+            return {}
+        implied = 1.0 / frame["odds"].to_numpy(float)
+        total = np.bincount(codes, implied, minlength=n_groups)
+        if self.config.devig_method == "power":
+            lo: npt.NDArray[np.float64] = np.full(n_groups, 0.2)
+            hi: npt.NDArray[np.float64] = np.full(n_groups, 5.0)
+            for _ in range(60):  # bisección vectorizada de k: Σ imp^k = 1 (Σ decrece con k)
+                mid = (lo + hi) / 2
+                s_mid = np.bincount(codes, implied ** mid[codes], minlength=n_groups)
+                too_big = s_mid > 1.0
+                lo = np.where(too_big, mid, lo)
+                hi = np.where(too_big, hi, mid)
+            k = (lo + hi) / 2
+            powered = implied ** k[codes]
+            fair = powered / np.bincount(codes, powered, minlength=n_groups)[codes]
+        else:
+            fair = implied / total[codes]
+        frame = frame.assign(fair=fair)
+        cache: dict[tuple[str, str, float | None], Selection | None] = {}
+        out: dict[tuple[str, Selection], float] = {}
+        for (mid, mkt, sel, ln), p in frame.groupby(["mid", "mkt", "sel", "line"], dropna=False)["fair"].mean().items():
+            key = (str(mkt), str(sel), None if pd.isna(ln) else float(ln))  # NaN != NaN: usar None
+            if key not in cache:
+                try:
+                    cache[key] = Selection.from_codes(key[0], key[1], key[2])
+                except (ValueError, TypeError):
+                    cache[key] = None
+            selection = cache[key]
+            if selection is not None:
+                out[(str(mid), selection)] = float(p)
+        return out
 
     def evaluate(self, predictions: Mapping[str, MatchPrediction], odds: pd.DataFrame) -> list[Pick]:
         """Evalúa TODAS las selecciones con momio (mejor precio), con o sin valor.
@@ -310,26 +388,79 @@ class ValueBetFinder:
         if df.empty:
             logger.warning("Ningún momio corresponde a partidos con predicción")
             return []
-        df["_sel"] = pd.Series([self._selection(row) for _, row in df.iterrows()], index=df.index, dtype=object)
+        # Una Selection por combinación única (mercado, resultado, línea), no por fila.
+        line = pd.to_numeric(df["line"], errors="coerce")
+        combos: dict[tuple[str, str, float], Selection | None] = {}
+        keys = list(zip(df["market"].astype(str), df["selection"].astype(str), line.fillna(np.nan).to_numpy(float)))
+        for k in set(keys):
+            try:
+                combos[k] = Selection.from_codes(k[0], k[1], None if np.isnan(k[2]) else k[2])
+            except (ValueError, TypeError):
+                combos[k] = None
+        df["_sel"] = pd.Series([combos[k] for k in keys], index=df.index, dtype=object)
         df = df[df["_sel"].notna()]
+        if self.config.allowed_markets is not None:  # perfil por liga: solo mercados con ventaja medida
+            allowed = set(self.config.allowed_markets)
+            df = df[[sel.market.value in allowed for sel in df["_sel"]]]
+            if df.empty:
+                return []
         best = df.loc[df.groupby(["match_id", "_sel"], sort=False)["odds"].idxmax()]
         picks: list[Pick] = []
-        for _, row in best.iterrows():
-            pred = predictions[row["match_id"]]
-            sel: Selection = row["_sel"]
+        for mid, league, kickoff, bookmaker, price, sel in zip(
+                best["match_id"], best["league"], best["commence_time"], best["bookmaker"], best["odds"], best["_sel"]):
+            pred = predictions[mid]
             p_model = pred.probability(sel)
-            p_market = consensus.get((str(row["match_id"]), sel))
-            pick = Pick(str(row["match_id"]), str(row["league"]), pred.home_team, pred.away_team,
-                        pred.kickoff if pred.kickoff is not None else row["commence_time"], sel,
-                        float(row["odds"]), str(row["bookmaker"]), p_model, p_market)
-            stake = modified_kelly(p_model, pick.odds, p_market, self.config.kelly) if self.is_value(pick) else 0.0
+            p_market = consensus.get((str(mid), sel))
+            pick = Pick(str(mid), str(league), pred.home_team, pred.away_team,
+                        pred.kickoff if pred.kickoff is not None else kickoff, sel,
+                        float(price), str(bookmaker), p_model, p_market,
+                        action_share=pred.action_share(sel))
+            pick = replace(pick, decision_prob=self.decision_probability(pick))
+            # Kelly con push: f* = s · f*_binario(p_eff) (exacto para ganar/push/perder)
+            stake = (modified_kelly(p_model, pick.odds, p_market, self.config.kelly) * pick.action_share
+                     if self.is_value(pick) else 0.0)
             picks.append(replace(pick, stake_fraction=stake))
         return picks
+
+    def reprice(self, pick: Pick, odds: float, bookmaker: str) -> Pick:
+        """El mismo pick al momio que ofrece (o pagó) otra casa, con EV y stake recalculados.
+
+        Args:
+            pick: Pick evaluado (con probabilidades del modelo y del mercado).
+            odds: Momio decimal de la otra casa.
+            bookmaker: Nombre de la casa (p. ej. ``"Caliente"``).
+
+        Returns:
+            Pick con ``odds``/``bookmaker`` nuevos y stake de Kelly modificado (0 si ya no hay valor).
+
+        Raises:
+            ValueError: Si el momio no es mayor que 1.
+        """
+        implied_probability(odds)  # valida el momio
+        repriced = replace(pick, odds=float(odds), bookmaker=bookmaker)
+        stake = (modified_kelly(repriced.model_prob, repriced.odds, repriced.market_prob, self.config.kelly)
+                 * repriced.action_share if self.is_value(repriced) else 0.0)
+        return replace(repriced, stake_fraction=stake)
+
+    def decision_probability(self, pick: Pick) -> float:
+        """Probabilidad usada para decidir el valor (modelo encogido hacia el mercado).
+
+        Args:
+            pick: Pick evaluado.
+
+        Returns:
+            ``w·p_modelo + (1−w)·p_mercado`` (o ``p_modelo`` si no hay mercado).
+        """
+        w = self.config.value_model_weight
+        if pick.market_prob is None or w >= 1.0:
+            return pick.model_prob
+        return w * pick.model_prob + (1 - w) * pick.market_prob
 
     def is_value(self, pick: Pick) -> bool:
         """Indica si un pick cumple los criterios de valor configurados."""
         c = self.config
-        if pick.model_prob <= pick.implied_prob or pick.edge < c.min_edge:
+        p = self.decision_probability(pick)
+        if p <= pick.implied_prob or pick.action_share * (p * pick.odds - 1) < c.min_edge:
             return False
         if not c.min_odds <= pick.odds <= c.max_odds or pick.model_prob < c.min_model_prob:
             return False
@@ -350,7 +481,7 @@ class ValueBetFinder:
             Picks de valor con stake sugerido.
         """
         value = [p for p in self.evaluate(predictions, odds) if self.is_value(p)]
-        return sorted(value, key=lambda p: p.edge, reverse=True)
+        return sorted(value, key=lambda p: p.adjusted_edge, reverse=True)
 
 
 # =============================================================================
@@ -538,6 +669,8 @@ class ParlayBuilder:
         c = self.config
         best: dict[tuple[str, Selection], Pick] = {}
         for p in picks:
+            if p.selection.is_graded:  # DNB/hándicap asiático: el push en parlays varía por casa
+                continue
             if p.model_prob < c.min_leg_prob or p.edge < c.min_leg_edge or p.odds < c.min_leg_odds:
                 continue
             key = (p.match_id, p.selection)
@@ -668,8 +801,35 @@ def apply_exposure_cap(singles: Sequence[Pick], parlays: Sequence[Parlay],
             [replace(p, stake_fraction=p.stake_fraction * factor) for p in parlays], factor)
 
 
+def apply_match_cap(singles: Sequence[Pick], max_per_match: float | None) -> list[Pick]:
+    """Limita la exposición total de las sencillas de un MISMO partido.
+
+    Varias sencillas de un partido suelen estar correlacionadas (p. ej. DNB
+    visitante y AH visitante +0.25); sin tope, el riesgo se concentra.
+
+    Args:
+        singles: Sencillas con stake.
+        max_per_match: Fracción máxima del bankroll por partido (``None`` = sin tope).
+
+    Returns:
+        Sencillas con los stakes escalados donde se superaba el tope.
+
+    Raises:
+        ValueError: Si el tope no está en (0, 1].
+    """
+    if max_per_match is None:
+        return list(singles)
+    if not 0 < max_per_match <= 1:
+        raise ValueError("max_per_match debe estar en (0, 1]")
+    totals: dict[str, float] = {}
+    for p in singles:
+        totals[p.match_id] = totals.get(p.match_id, 0.0) + p.stake_fraction
+    return [replace(p, stake_fraction=p.stake_fraction * max_per_match / totals[p.match_id])
+            if totals[p.match_id] > max_per_match else p for p in singles]
+
+
 __all__ = [
-    "ConflictChecker", "KellyConfig", "Parlay", "ParlayBuilder", "ParlayConfig", "Pick", "ValueBetConfig",
+    "apply_match_cap", "ConflictChecker", "KellyConfig", "Parlay", "ParlayBuilder", "ParlayConfig", "Pick", "ValueBetConfig",
     "ValueBetFinder", "apply_exposure_cap", "expected_value", "implied_probability", "kelly_fraction",
     "modified_kelly", "remove_margin",
 ]

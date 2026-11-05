@@ -1,0 +1,8 @@
+# Desarrollo y pruebas
+-r requirements.txt
+pytest>=7.4
+pytest-cov>=4.1
+mypy>=1.8
+pandas-stubs>=2.1
+types-requests>=2.31
+ruff>=0.6

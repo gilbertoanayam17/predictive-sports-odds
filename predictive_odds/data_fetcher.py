@@ -38,7 +38,7 @@ import pandas as pd
 import requests
 from scipy.stats import poisson
 
-from .config import LeagueConfig, get_league
+from .config import LEAGUES, LeagueConfig, get_league
 from .domain import (
     MARKET_SIZE,
     MATCH_COLUMNS,
@@ -47,9 +47,13 @@ from .domain import (
     STATUS_SCHEDULED,
     Market,
     Selection,
+    graded_components,
 )
 
 logger = logging.getLogger(__name__)
+
+#: Nombre de la casa que representa la línea de cierre (para CLV, nunca para apostar).
+CLOSING_BOOKMAKER = "closing"
 
 
 # =============================================================================
@@ -341,6 +345,70 @@ DEFAULT_TEAM_ALIASES: dict[str, str] = {
     "santos": "santos laguna",
     "queretaro fc": "queretaro",
     "fc juarez": "juarez",
+    # La Liga (football-data.co.uk abrevia)
+    "ath bilbao": "athletic bilbao",
+    "athletic club": "athletic bilbao",
+    "ath madrid": "atletico madrid",
+    "celta": "celta vigo",
+    "espanol": "espanyol",
+    "vallecano": "rayo vallecano",
+    "betis": "real betis",
+    "sociedad": "real sociedad",
+    "real oviedo": "oviedo",
+    # Serie A
+    "verona": "hellas verona",
+    # Bundesliga
+    "m gladbach": "borussia monchengladbach",
+    "monchengladbach": "borussia monchengladbach",
+    "ein frankfurt": "eintracht frankfurt",
+    "hamburger sv": "hamburg",
+    "fc koln": "koln",
+    "1 koln": "koln",
+    # Ligue 1
+    "paris saint germain": "paris saint germain",
+    "olympique lyonnais": "lyon",
+    "olympique marseille": "marseille",
+    # Eredivisie
+    "for sittard": "fortuna sittard",
+    "heracles almelo": "heracles",
+    "az": "az alkmaar",
+    # Championship
+    "sheffield weds": "sheffield wednesday",
+    "sheffield utd": "sheffield united",
+    "west brom": "west bromwich albion",
+    "qpr": "queens park rangers",
+    "preston north end": "preston",
+    "stoke city": "stoke",
+    "swansea city": "swansea",
+    "leicester city": "leicester",
+    "norwich city": "norwich",
+    "oxford united": "oxford",
+    "derby county": "derby",
+    "hull city": "hull",
+    "ipswich town": "ipswich",
+    "coventry city": "coventry",
+    "birmingham city": "birmingham",
+    "blackburn rovers": "blackburn",
+    "charlton athletic": "charlton",
+    "wrexham afc": "wrexham",
+    # Primeira Liga
+    "sp lisbon": "sporting cp",
+    "sporting lisbon": "sporting cp",
+    "sp braga": "braga",
+    "sporting braga": "braga",
+    "guimaraes": "vitoria guimaraes",
+    "estrela amadora": "estrela",
+    "avs futebol sad": "avs",
+    # MLS
+    "atlanta utd": "atlanta united",
+    "los angeles galaxy": "la galaxy",
+    "lafc": "los angeles",
+    "d c united": "dc united",
+    "montreal impact": "montreal",
+    "cf montreal": "montreal",
+    "inter miami cf": "inter miami",
+    "new york city": "new york city",
+    "seattle sounders": "seattle sounders",
 }
 
 
@@ -392,6 +460,13 @@ class TeamNameNormalizer:
         target = self.key(name)
         if target in by_key:
             return by_key[target]
+        # "Hull" ↔ "Hull City", "Ipswich" ↔ "Ipswich Town": las palabras de uno contienen las del otro.
+        # Solo si el candidato es único ("Manchester" no debe casar con United y City a la vez).
+        words = set(target.split())
+        if words:
+            nested = [k for k in by_key if (set(k.split()) <= words or words <= set(k.split()))]
+            if len(nested) == 1:
+                return by_key[nested[0]]
         close = difflib.get_close_matches(target, list(by_key), n=1, cutoff=self.fuzzy_cutoff)
         return by_key[close[0]] if close else None
 
@@ -484,15 +559,19 @@ def validate_odds(df: pd.DataFrame) -> pd.DataFrame:
     out["line"] = pd.to_numeric(out["line"], errors="coerce")
     out["commence_time"] = pd.to_datetime(out["commence_time"], utc=True, errors="coerce")
 
-    def _valid_selection(row: pd.Series) -> bool:
+    def _valid_selection(market: Any, selection: Any, line: Any) -> bool:
         try:
-            Selection.from_codes(str(row["market"]), str(row["selection"]), row["line"])
+            Selection.from_codes(str(market), str(selection), line)
             return True
         except (ValueError, TypeError):
             return False
 
     n0 = len(out)
-    ok = out["odds"].between(1.0, 1000.0, inclusive="neither") & out.apply(_valid_selection, axis=1).astype(bool)
+    lines: list[float | None] = [None if pd.isna(v) else float(v) for v in out["line"]]
+    keys = list(zip(out["market"].astype(str), out["selection"].astype(str), lines))
+    valid = {k: _valid_selection(*k) for k in set(keys)}
+    sel_ok = pd.Series([valid[k] for k in keys], index=out.index, dtype=bool)
+    ok = out["odds"].between(1.0, 1000.0, inclusive="neither") & sel_ok
     out = out.loc[ok]
     if len(out) < n0:
         logger.warning("Validación de momios: %d filas descartadas de %d", n0 - len(out), n0)
@@ -565,7 +644,15 @@ class FootballDataCoUkProvider(ResultsProvider):
     name = "football-data.co.uk"
     BASE_URL = "https://www.football-data.co.uk"
     #: Prefijos de columnas de momios por casa (formato "main").
-    BOOKMAKER_PREFIXES: dict[str, str] = {"B365": "bet365", "PS": "pinnacle", "Avg": "average", "Max": "max"}
+    #: Casas cuyos precios se usan. "Max" (mejor precio entre TODAS las casas) se excluye a propósito:
+    #: ninguna casa concreta lo ofrece y apostar a él inflaría el ROI/CLV del backtest. "Avg" (precio
+    #: medio) se conserva como aproximación conservadora de una casa típica.
+    BOOKMAKER_PREFIXES: dict[str, str] = {"B365": "bet365", "PS": "pinnacle", "Avg": "average"}
+    #: Columnas de cierre de Pinnacle → se exponen como ``CLOSING_BOOKMAKER``.
+    CLOSING_COLUMNS: tuple[tuple[str, str, str, float | None], ...] = (
+        ("PSCH", "1X2", "HOME", None), ("PSCD", "1X2", "DRAW", None), ("PSCA", "1X2", "AWAY", None),
+        ("PC>2.5", "OU", "OVER", 2.5), ("PC<2.5", "OU", "UNDER", 2.5),
+    )
 
     def __init__(self, client: HttpClient | None = None) -> None:
         """Crea el proveedor.
@@ -631,15 +718,22 @@ class FootballDataCoUkProvider(ResultsProvider):
         )
         return validate_matches(df)
 
-    def fetch_historical_odds(self, league: LeagueConfig, season: int) -> pd.DataFrame:
+    def fetch_historical_odds(self, league: LeagueConfig, season: int, include_closing: bool = True) -> pd.DataFrame:
         """Extrae los momios pre-partido incluidos en el CSV (para backtesting).
 
         Args:
             league: Liga.
             season: Temporada.
+            include_closing: Si se incluyen los momios de cierre de Pinnacle
+                (como casa ``CLOSING_BOOKMAKER``) para medir el CLV.
 
         Returns:
-            DataFrame con ``ODDS_COLUMNS`` (1X2 y Over/Under 2.5).
+            DataFrame con ``ODDS_COLUMNS`` (1X2, Over/Under 2.5 y hándicap asiático).
+
+        Note:
+            En el formato "extra" (Liga MX) football-data solo publica momios de
+            cierre; entonces se usan como precio de apuesta, lo que hace el
+            backtest conservador (el CLV frente a Pinnacle queda cerca de 0).
         """
         raw = self._download(league, season)
         rows: list[dict[str, Any]] = []
@@ -648,13 +742,35 @@ class FootballDataCoUkProvider(ResultsProvider):
             base = {"match_id": mid, "league": league.key, "home_team": r["HomeTeam"],
                     "away_team": r["AwayTeam"], "commence_time": r["date_parsed"]}
             for prefix, book in self.BOOKMAKER_PREFIXES.items():
+                # El formato "extra" (p. ej. Liga MX) solo trae momios de CIERRE (B365CH, AvgCH...):
+                # si no hay precio pre-partido se usa el de cierre de esa casa (backtest conservador).
+                pre = f"{prefix}H" in raw.columns
+                tag = "" if pre else "C"
                 for col, market, sel, line in (
-                    (f"{prefix}H", "1X2", "HOME", None), (f"{prefix}D", "1X2", "DRAW", None),
-                    (f"{prefix}A", "1X2", "AWAY", None), (f"{prefix}>2.5", "OU", "OVER", 2.5),
-                    (f"{prefix}<2.5", "OU", "UNDER", 2.5),
+                    (f"{prefix}{tag}H", "1X2", "HOME", None), (f"{prefix}{tag}D", "1X2", "DRAW", None),
+                    (f"{prefix}{tag}A", "1X2", "AWAY", None), (f"{prefix}{tag}>2.5", "OU", "OVER", 2.5),
+                    (f"{prefix}{tag}<2.5", "OU", "UNDER", 2.5),
                 ):
                     if col in raw.columns and pd.notna(r[col]):
                         rows.append({**base, "bookmaker": book, "market": market,
+                                     "selection": sel, "line": line, "odds": r[col]})
+            ah = r.get("AHh")
+            if ah is not None and pd.notna(ah):
+                for prefix, book in self.BOOKMAKER_PREFIXES.items():
+                    for col, sel, ln in ((f"{prefix}AHH", "HOME", float(ah)), (f"{prefix}AHA", "AWAY", -float(ah))):
+                        if col in raw.columns and pd.notna(r[col]):
+                            rows.append({**base, "bookmaker": book, "market": "AH", "selection": sel,
+                                         "line": ln, "odds": r[col]})
+            ahc = r.get("AHCh")
+            if include_closing and ahc is not None and pd.notna(ahc):
+                for col, sel, ln in (("PCAHH", "HOME", float(ahc)), ("PCAHA", "AWAY", -float(ahc))):
+                    if col in raw.columns and pd.notna(r[col]):
+                        rows.append({**base, "bookmaker": CLOSING_BOOKMAKER, "market": "AH", "selection": sel,
+                                     "line": ln, "odds": r[col]})
+            if include_closing:
+                for col, market, sel, line in self.CLOSING_COLUMNS:
+                    if col in raw.columns and pd.notna(r[col]):
+                        rows.append({**base, "bookmaker": CLOSING_BOOKMAKER, "market": market,
                                      "selection": sel, "line": line, "odds": r[col]})
         return validate_odds(pd.DataFrame(rows)) if rows else empty_odds()
 
@@ -662,6 +778,11 @@ class FootballDataCoUkProvider(ResultsProvider):
 # =============================================================================
 # API-Football (api-sports.io, freemium)
 # =============================================================================
+#: Peticiones (ruta, parámetros) que el plan de API-Football rechazó en este proceso: no se repiten,
+#: para no gastar el cupo diario ni añadir latencia en cada análisis de la app.
+_API_FOOTBALL_PLAN_BLOCKED: set[tuple[str, str]] = set()
+
+
 class ApiFootballProvider(ResultsProvider):
     """Calendario, resultados, xG por partido y lesiones desde API-Football v3.
 
@@ -701,12 +822,21 @@ class ApiFootballProvider(ResultsProvider):
             DataFetchError: Otros errores reportados por la API.
             DataValidationError: Respuesta con forma inesperada.
         """
+        if (path, json.dumps(dict(params), sort_keys=True, default=str)) in _API_FOOTBALL_PLAN_BLOCKED:
+            raise ProviderNotSupportedError("Tu plan de API-Football no cubre esta temporada (ya comprobado; "
+                                            "no se repite la petición)")
         data = self.client.get_json(path, params)
         if not isinstance(data, dict):
             raise DataValidationError(f"Respuesta inesperada de API-Football: {type(data).__name__}")
         errors = data.get("errors")
         if errors:
             text = json.dumps(errors).lower()
+            if isinstance(errors, dict) and "plan" in errors:
+                _API_FOOTBALL_PLAN_BLOCKED.add((path, json.dumps(dict(params), sort_keys=True, default=str)))
+                raise ProviderNotSupportedError(
+                    f"Tu plan de API-Football no cubre esta temporada ({errors['plan']}). El plan gratuito "
+                    "solo da acceso a temporadas antiguas: deja la clave vacía (las ligas con histórico en "
+                    "football-data.co.uk no la necesitan) o usa un plan de pago.")
             if "token" in text or "key" in text:
                 raise AuthenticationError(f"API-Football: {errors}")
             if "request" in text or "limit" in text:
@@ -834,8 +964,17 @@ class ApiFootballProvider(ResultsProvider):
 class TheOddsApiProvider(OddsProvider):
     """Momios en vivo de múltiples casas desde The Odds API v4.
 
-    Plan gratuito: 500 créditos/mes. Cada mercado x región consume 1 crédito
-    por llamada; ``btts`` requiere el endpoint por evento (más caro).
+    Plan gratuito: 500 créditos/mes. Cada llamada a ``/odds`` cuesta
+    *mercados × regiones* créditos; ``btts`` requiere el endpoint por evento
+    (más caro). Para ahorrar créditos:
+
+    * antes de pedir momios se consulta ``/events``, que es **gratuito**: si no
+      hay partidos dentro del horizonte (``horizon_hours``) no se gasta nada;
+    * una sola región por defecto (``eu``: incluye Pinnacle y las casas europeas);
+    * caché en disco de 10 minutos (el horizonte se redondea a la hora para que
+      la caché acierte);
+    * los créditos restantes se guardan en ``.cache/odds_api/credits.json`` para
+      mostrarlos en la app.
     """
 
     name = "the-odds-api"
@@ -844,10 +983,12 @@ class TheOddsApiProvider(OddsProvider):
     def __init__(
         self,
         api_key: str,
-        regions: str = "eu,uk",
+        regions: str = "eu",
         markets: Sequence[str] = ("h2h", "totals"),
         include_btts: bool = False,
         client: HttpClient | None = None,
+        horizon_hours: float | None = 96.0,
+        credits_file: Path | None = Path(".cache/odds_api/credits.json"),
     ) -> None:
         """Crea el proveedor.
 
@@ -857,6 +998,9 @@ class TheOddsApiProvider(OddsProvider):
             markets: Mercados del endpoint principal (``h2h``, ``totals``).
             include_btts: Si se consultan también los momios BTTS por evento.
             client: Cliente HTTP opcional.
+            horizon_hours: Solo partidos que empiezan en las próximas N horas
+                (``None`` = sin límite y sin consulta previa de eventos).
+            credits_file: Dónde guardar los créditos restantes (``None`` = no guardar).
 
         Raises:
             AuthenticationError: Si no se proporciona API key.
@@ -867,15 +1011,60 @@ class TheOddsApiProvider(OddsProvider):
         self.regions = regions
         self.markets = tuple(markets)
         self.include_btts = include_btts
+        self.horizon_hours = horizon_hours
+        self.credits_file = credits_file
         self.client = client or HttpClient(
             self.BASE_URL, config=HttpClientConfig(cache_dir=Path(".cache/odds_api"), cache_ttl=600)
         )
 
+    @property
+    def credit_cost(self) -> int:
+        """Créditos que cuesta cada llamada a ``/odds`` (mercados × regiones)."""
+        return len(self.markets) * len([r for r in self.regions.split(",") if r.strip()])
+
     def _log_quota(self) -> None:
-        """Registra los créditos restantes informados por la API."""
+        """Registra (y persiste) los créditos restantes informados por la API."""
         remaining = self.client.last_headers.get("x-requests-remaining")
-        if remaining is not None:
-            logger.info("The Odds API: créditos restantes = %s", remaining)
+        if remaining is None:
+            return
+        logger.info("The Odds API: créditos restantes = %s", remaining)
+        if self.credits_file is not None:
+            try:
+                self.credits_file.parent.mkdir(parents=True, exist_ok=True)
+                self.credits_file.write_text(json.dumps({
+                    "remaining": remaining, "used": self.client.last_headers.get("x-requests-used"),
+                    "updated": pd.Timestamp.now(tz="UTC").isoformat(timespec="seconds")}), encoding="utf-8")
+            except OSError as exc:
+                logger.debug("No se pudieron guardar los créditos: %s", exc)
+
+    @staticmethod
+    def read_credits(path: Path = Path(".cache/odds_api/credits.json")) -> dict[str, Any] | None:
+        """Últimos créditos conocidos (``remaining``, ``used``, ``updated``) o ``None``."""
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else None
+        except (OSError, ValueError):
+            return None
+
+    def upcoming_events(self, league: LeagueConfig) -> list[dict[str, Any]]:
+        """Eventos próximos dentro del horizonte, vía ``/events`` (no consume créditos).
+
+        Args:
+            league: Liga.
+
+        Returns:
+            Lista de eventos (``id``, ``commence_time``, equipos).
+        """
+        params = {"apiKey": self.api_key, "dateFormat": "iso", **self._window()}
+        events = self.client.get_json(f"sports/{league.odds_api_sport_key}/events", params)
+        return events if isinstance(events, list) else []
+
+    def _window(self) -> dict[str, str]:
+        """Parámetros ``commenceTimeTo`` del horizonte (redondeado a la hora para aprovechar la caché)."""
+        if self.horizon_hours is None:
+            return {}
+        until = (pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=self.horizon_hours)).ceil("h")
+        return {"commenceTimeTo": until.strftime("%Y-%m-%dT%H:%M:%SZ")}
 
     @staticmethod
     def parse_events(events: Any, league_key: str) -> pd.DataFrame:
@@ -912,6 +1101,9 @@ class TheOddsApiProvider(OddsProvider):
                             elif mkt.get("key") == "totals":
                                 market, line = "OU", outcome.get("point")
                                 selection = {"Over": "OVER", "Under": "UNDER"}.get(name)
+                            elif mkt.get("key") == "spreads":  # hándicap asiático
+                                market, line = "AH", outcome.get("point")
+                                selection = {home: "HOME", away: "AWAY"}.get(name)
                             elif mkt.get("key") == "btts":
                                 market = "BTTS"
                                 selection = {"Yes": "YES", "No": "NO"}.get(name)
@@ -926,8 +1118,20 @@ class TheOddsApiProvider(OddsProvider):
         """Descarga momios actuales (ver :class:`OddsProvider`)."""
         if not league.odds_api_sport_key:
             raise ProviderNotSupportedError(f"{league.name} no tiene clave de The Odds API")
+        if self.horizon_hours is not None:
+            try:
+                upcoming = self.upcoming_events(league)
+            except (RateLimitError, AuthenticationError):
+                raise
+            except DataFetchError as exc:  # si /events falla, se pide /odds igualmente
+                logger.warning("No se pudo consultar /events (%s); se piden los momios directamente", exc)
+                upcoming = None
+            if upcoming is not None and not upcoming:
+                logger.info("%s: sin partidos en las próximas %.0f h; no se gastan créditos",
+                            league.name, self.horizon_hours)
+                return empty_odds()
         params = {"apiKey": self.api_key, "regions": self.regions, "markets": ",".join(self.markets),
-                  "oddsFormat": "decimal", "dateFormat": "iso"}
+                  "oddsFormat": "decimal", "dateFormat": "iso", **self._window()}
         events = self.client.get_json(f"sports/{league.odds_api_sport_key}/odds", params)
         self._log_quota()
         frames = [self.parse_events(events, league.key)]
@@ -969,6 +1173,17 @@ class SimulationConfig:
         bookmakers: Nombres de las casas simuladas.
         margin: Margen (overround) de las casas.
         bookmaker_noise: Error de estimación de cada casa (log-escala).
+        closing_noise: Error de la línea de cierre (mercado más eficiente).
+        closing_margin: Margen de la línea de cierre.
+        league_offsets: Fuerza relativa de cada liga doméstica (solo influye en
+            competiciones internacionales; ``OTHER`` = clubes sin liga simulada).
+        injury_rate: Probabilidad de que un equipo tenga bajas en la próxima jornada.
+        injury_max_players: Máximo de bajas por equipo.
+        injury_attack_effect: Pérdida real de ataque por baja.
+        injury_defense_effect: Aumento real de goles recibidos por baja.
+        injury_doubtful_prob: Fracción de bajas reportadas como duda (juegan el 50%).
+        ou_lines: Líneas de Over/Under cotizadas.
+        ah_lines: Líneas de hándicap asiático cotizadas (vistas desde el local).
     """
 
     seed: int = 42
@@ -983,6 +1198,16 @@ class SimulationConfig:
     bookmakers: tuple[str, ...] = ("simbet", "oddsmaker", "luckyline")
     margin: float = 0.055
     bookmaker_noise: float = 0.07
+    closing_noise: float = 0.03
+    closing_margin: float = 0.025
+    ah_lines: tuple[float, ...] = (-1.0, -0.75, -0.25, 0.25)
+    league_offsets: dict[str, float] = field(default_factory=lambda: {
+        "EPL": 0.20, "LA_LIGA": 0.15, "SERIE_A": 0.10, "BUNDESLIGA": 0.10, "LIGA_MX": -0.20, "OTHER": 0.05})
+    injury_rate: float = 0.35
+    injury_max_players: int = 3
+    injury_attack_effect: float = 0.04
+    injury_defense_effect: float = 0.025
+    injury_doubtful_prob: float = 0.3
     ou_lines: tuple[float, ...] = (1.5, 2.5, 3.5)
 
 
@@ -1073,12 +1298,46 @@ class SimulatedDataProvider(ResultsProvider, OddsProvider):
         Returns:
             ``(lambda_local, lambda_visitante)``.
         """
+        c = self.config
+        att_h, def_h = self._team_strength(league, season, home)
+        att_a, def_a = self._team_strength(league, season, away)
+        lh = np.exp(c.base_log_rate + c.home_advantage + att_h + def_a)
+        la = np.exp(c.base_log_rate + att_a + def_h)
+        return float(lh), float(la)
+
+    def domestic_league(self, team: str, exclude: str = "") -> str | None:
+        """Liga doméstica simulada de un equipo (``None`` si no pertenece a ninguna).
+
+        Args:
+            team: Equipo.
+            exclude: Clave de liga a ignorar.
+
+        Returns:
+            Clave de la liga doméstica o ``None``.
+        """
+        for key, cfg in LEAGUES.items():
+            if key != exclude and not cfg.is_international and team in cfg.sample_teams:
+                return key
+        return None
+
+    def _team_strength(self, league: LeagueConfig, season: int, team: str) -> tuple[float, float]:
+        """Fuerza (ataque, defensa) verdadera, coherente entre competiciones.
+
+        En una competición internacional, un club con liga doméstica simulada usa
+        su fuerza doméstica desplazada por el coeficiente de su liga.
+        """
         self._ensure_strengths(league, season)
         st = self._state[league.key]
-        c = self.config
-        lh = np.exp(c.base_log_rate + c.home_advantage + st.attack[season][home] + st.defense[season][away])
-        la = np.exp(c.base_log_rate + st.attack[season][away] + st.defense[season][home])
-        return float(lh), float(la)
+        if league.is_international:
+            home_key = self.domestic_league(team, exclude=league.key)
+            off = self.config.league_offsets.get(home_key or "OTHER", 0.0)
+            if home_key is not None:
+                dom = get_league(home_key)
+                self._ensure_strengths(dom, season)
+                dst = self._state[dom.key]
+                return dst.attack[season][team] + off, dst.defense[season][team] - off
+            return st.attack[season][team] + off, st.defense[season][team] - off
+        return st.attack[season][team], st.defense[season][team]
 
     def fetch_matches(self, league: LeagueConfig, season: int) -> pd.DataFrame:
         """Genera los partidos de una temporada (ver :class:`ResultsProvider`)."""
@@ -1096,7 +1355,7 @@ class SimulatedDataProvider(ResultsProvider, OddsProvider):
             date = start + pd.Timedelta(days=7 * r)
             played = season < current or r < self.config.played_rounds_current
             for home, away in rnd:
-                lh, la = self.true_lambdas(league, season, home, away)
+                lh, la = self.match_lambdas(league, season, r, home, away)
                 row: dict[str, Any] = {
                     "match_id": f"sim-{league.key}-{season}-r{r + 1:02d}-{TeamNameNormalizer.canonical(home).replace(' ', '_')}",
                     "league": league.key, "season": season, "date": date,
@@ -1115,6 +1374,59 @@ class SimulatedDataProvider(ResultsProvider, OddsProvider):
         st.matches[season] = df
         return df.copy()
 
+    def _odds_rows(self, league: LeagueConfig, season: int, matches: pd.DataFrame,
+                   books: Sequence[tuple[str, float, float]]) -> list[dict[str, Any]]:
+        """Genera filas de momios para un conjunto de partidos.
+
+        Las casas parten de las λ verdaderas del partido (incluidas las bajas
+        de esa jornada, que conocen) más su propio error de estimación.
+
+        Args:
+            league: Liga.
+            season: Temporada (para las fuerzas verdaderas).
+            matches: Partidos a cotizar.
+            books: Tuplas ``(casa, ruido, margen)``.
+
+        Returns:
+            Filas en el esquema ``ODDS_COLUMNS`` (sin validar).
+        """
+        c = self.config
+        grid = np.arange(11)
+        markets: list[tuple[str, str, float | None]] = [
+            ("1X2", "HOME", None), ("1X2", "DRAW", None), ("1X2", "AWAY", None),
+            ("BTTS", "YES", None), ("BTTS", "NO", None), ("DNB", "HOME", None), ("DNB", "AWAY", None),
+        ]
+        markets += [("OU", s, ln) for ln in c.ou_lines for s in ("OVER", "UNDER")]
+        for ln in c.ah_lines:
+            markets += [("AH", "HOME", ln), ("AH", "AWAY", -ln)]
+        sels = [Selection.from_codes(mk, sel, ln) for mk, sel, ln in markets]
+        rows: list[dict[str, Any]] = []
+        for m in matches.itertuples(index=False):
+            lh, la = self.match_lambdas(league, season, self._round_of(season, m.date),
+                                        str(m.home_team), str(m.away_team))
+            for book, noise, margin in books:
+                rng = self._rng(league.key, "odds", book, str(m.match_id))
+                blh = lh * np.exp(rng.normal(0, noise))
+                bla = la * np.exp(rng.normal(0, noise))
+                mat = np.outer(poisson.pmf(grid, blh), poisson.pmf(grid, bla))
+                mat /= mat.sum()
+                for (market, sel, line), selection in zip(markets, sels):
+                    if selection.is_graded:  # precio sobre la probabilidad efectiva W/(W+L)
+                        w, loss = graded_components(selection, mat)
+                        prob = w / (w + loss) if w + loss > 0 else 0.5
+                    else:
+                        prob = float(mat[selection.mask(10)].sum())
+                    p = min(max(prob, 0.01), 0.99)
+                    odds = round(max(1.01, 1.0 / (p * (1 + margin))), 2)
+                    rows.append({"match_id": m.match_id, "league": league.key, "home_team": m.home_team,
+                                 "away_team": m.away_team, "commence_time": m.date, "bookmaker": book,
+                                 "market": market, "selection": sel, "line": line, "odds": odds})
+        return rows
+
+    def _books(self) -> list[tuple[str, float, float]]:
+        """Casas de apuestas "blandas" simuladas: ``(nombre, ruido, margen)``."""
+        return [(b, self.config.bookmaker_noise, self.config.margin) for b in self.config.bookmakers]
+
     def fetch_odds(self, league: LeagueConfig) -> pd.DataFrame:
         """Genera momios de la próxima jornada con margen y error por casa."""
         season = max(self.config.seasons)
@@ -1122,35 +1434,102 @@ class SimulatedDataProvider(ResultsProvider, OddsProvider):
         upcoming = matches[matches["status"] == STATUS_SCHEDULED]
         if upcoming.empty:
             return empty_odds()
-        next_date = upcoming["date"].min()
-        upcoming = upcoming[upcoming["date"] == next_date]
-        c = self.config
-        grid = np.arange(11)
-        rows: list[dict[str, Any]] = []
-        for _, m in upcoming.iterrows():
-            lh, la = self.true_lambdas(league, season, m["home_team"], m["away_team"])
-            for book in c.bookmakers:
-                rng = self._rng(league.key, "odds", book, m["match_id"])
-                blh = lh * np.exp(rng.normal(0, c.bookmaker_noise))
-                bla = la * np.exp(rng.normal(0, c.bookmaker_noise))
-                mat = np.outer(poisson.pmf(grid, blh), poisson.pmf(grid, bla))
-                mat /= mat.sum()
-                markets: list[tuple[str, str, float | None]] = [
-                    ("1X2", "HOME", None), ("1X2", "DRAW", None), ("1X2", "AWAY", None),
-                    ("BTTS", "YES", None), ("BTTS", "NO", None),
-                ] + [("OU", s, ln) for ln in c.ou_lines for s in ("OVER", "UNDER")]
-                for market, sel, line in markets:
-                    p = float(mat[Selection.from_codes(market, sel, line).mask(10)].sum())
-                    p = min(max(p, 0.01), 0.99)
-                    odds = round(max(1.01, 1.0 / (p * (1 + c.margin))), 2)
-                    rows.append({"match_id": m["match_id"], "league": league.key, "home_team": m["home_team"],
-                                 "away_team": m["away_team"], "commence_time": m["date"], "bookmaker": book,
-                                 "market": market, "selection": sel, "line": line, "odds": odds})
+        upcoming = upcoming[upcoming["date"] == upcoming["date"].min()]
+        rows = self._odds_rows(league, season, upcoming, self._books())
         return validate_odds(pd.DataFrame(rows))
 
+    @staticmethod
+    def _round_of(season: int, date: Any) -> int:
+        """Índice (0-based) de la jornada a partir de la fecha del partido."""
+        start = pd.Timestamp(f"{season}-08-16 15:00", tz="UTC")
+        return int(round((pd.Timestamp(date) - start).days / 7))
+
+    def _next_round(self) -> tuple[int, int]:
+        """``(temporada, jornada)`` de la próxima jornada por jugar."""
+        return max(self.config.seasons), self.config.played_rounds_current
+
+    def match_lambdas(self, league: LeagueConfig, season: int, round_idx: int,
+                      home: str, away: str) -> tuple[float, float]:
+        """λ verdaderas de un partido concreto: fuerzas + bajas de esa jornada.
+
+        Args:
+            league: Liga.
+            season: Temporada.
+            round_idx: Jornada (0-based).
+            home: Local.
+            away: Visitante.
+
+        Returns:
+            ``(λ_local, λ_visitante)``.
+        """
+        lh, la = self.true_lambdas(league, season, home, away)
+        mult = self.injury_multipliers(league, season, round_idx)
+        ah, dh = mult.get(home, (1.0, 1.0))
+        aa, da = mult.get(away, (1.0, 1.0))
+        return lh * ah * da, la * aa * dh
+
+    def _injury_list(self, league: LeagueConfig, season: int | None = None,
+                     round_idx: int | None = None) -> list[tuple[str, str, str]]:
+        """Bajas simuladas de una jornada (por defecto la próxima): ``(equipo, jugador, tipo)``."""
+        if season is None or round_idx is None:
+            season, round_idx = self._next_round()
+        if self.config.injury_rate <= 0:
+            return []
+        rng = self._rng(league.key, "injuries", season, round_idx)
+        out: list[tuple[str, str, str]] = []
+        for team in league.sample_teams:
+            if rng.uniform() < self.config.injury_rate:
+                for k in range(int(rng.integers(1, self.config.injury_max_players + 1))):
+                    kind = "Questionable" if rng.uniform() < self.config.injury_doubtful_prob else "Missing Fixture"
+                    out.append((team, f"{team} Jugador {k + 1}", kind))
+        return out
+
+    def injury_multipliers(self, league: LeagueConfig, season: int | None = None,
+                           round_idx: int | None = None) -> dict[str, tuple[float, float]]:
+        """Efecto REAL (esperado) de las bajas: ``equipo -> (mult_ataque, mult_defensa)``.
+
+        Una duda juega con probabilidad 0.5, por lo que cuenta la mitad.
+
+        Args:
+            league: Liga.
+            season: Temporada (por defecto la de la próxima jornada).
+            round_idx: Jornada (por defecto la próxima).
+
+        Returns:
+            Multiplicadores por equipo con bajas.
+        """
+        c = self.config
+        acc: dict[str, tuple[float, float]] = {}
+        for team, _player, kind in self._injury_list(league, season, round_idx):
+            w = 0.5 if kind == "Questionable" else 1.0
+            a, d = acc.get(team, (1.0, 1.0))
+            acc[team] = (a - w * c.injury_attack_effect, d + w * c.injury_defense_effect)
+        return acc
+
+    def fetch_historical_odds(self, league: LeagueConfig, season: int, include_closing: bool = True) -> pd.DataFrame:
+        """Momios pre-partido de los partidos ya jugados (para backtesting).
+
+        Args:
+            league: Liga.
+            season: Temporada.
+            include_closing: Si se añade la línea de cierre "sharp"
+                (casa ``CLOSING_BOOKMAKER``: poco ruido y margen bajo) para medir el CLV.
+
+        Returns:
+            DataFrame con ``ODDS_COLUMNS``.
+        """
+        matches = self.fetch_matches(league, season)
+        played = matches[matches["status"] == STATUS_FINISHED]
+        books = self._books()
+        if include_closing:
+            books.append((CLOSING_BOOKMAKER, self.config.closing_noise, self.config.closing_margin))
+        return validate_odds(pd.DataFrame(self._odds_rows(league, season, played, books)))
+
     def fetch_injuries(self, league: LeagueConfig, season: int) -> pd.DataFrame:
-        """Sin lesiones en la simulación: devuelve un DataFrame vacío."""
-        return pd.DataFrame(columns=["team", "player", "type", "reason", "match_id"])
+        """Bajas simuladas de la próxima jornada (afectan a los resultados y a los momios)."""
+        rows = [{"team": t, "player": p, "type": k, "reason": "simulada", "match_id": None}
+                for t, p, k in self._injury_list(league)]
+        return pd.DataFrame(rows, columns=["team", "player", "type", "reason", "match_id"])
 
 
 # =============================================================================
@@ -1377,5 +1756,5 @@ __all__ = [
     "ApiFootballProvider", "AuthenticationError", "DataFetchError", "DataFetcher", "DataValidationError",
     "FootballDataCoUkProvider", "HttpClient", "HttpClientConfig", "OddsProvider", "ProviderNotSupportedError",
     "RateLimitError", "ResultsProvider", "SimulatedDataProvider", "SimulationConfig", "TeamNameNormalizer",
-    "TheOddsApiProvider", "complete_markets", "validate_matches", "validate_odds", "Market",
+    "TheOddsApiProvider", "CLOSING_BOOKMAKER", "complete_markets", "validate_matches", "validate_odds", "Market",
 ]

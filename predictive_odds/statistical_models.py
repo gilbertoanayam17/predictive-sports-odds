@@ -541,6 +541,41 @@ class FeatureEngineer:
 
 
 # =============================================================================
+# Ajustes de contexto (lesiones, rotaciones...)
+# =============================================================================
+@dataclass(frozen=True)
+class TeamAdjustment:
+    """Multiplicadores de contexto sobre la fuerza de un equipo.
+
+    Attributes:
+        attack: Multiplicador de los goles que marca (0.9 = −10%).
+        defense: Multiplicador de los goles que recibe (1.1 = recibe 10% más).
+        reason: Descripción legible del ajuste.
+    """
+
+    attack: float = 1.0
+    defense: float = 1.0
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        """Valida que los multiplicadores sean positivos y razonables.
+
+        Raises:
+            ValueError: Si algún multiplicador está fuera de (0, 3].
+        """
+        if not (0 < self.attack <= 3 and 0 < self.defense <= 3):
+            raise ValueError(f"Multiplicadores fuera de rango: {self.attack}, {self.defense}")
+
+    @property
+    def is_neutral(self) -> bool:
+        """Indica si el ajuste no cambia nada."""
+        return abs(self.attack - 1) < 1e-12 and abs(self.defense - 1) < 1e-12
+
+
+NEUTRAL_ADJUSTMENT = TeamAdjustment()
+
+
+# =============================================================================
 # Poisson / Dixon-Coles
 # =============================================================================
 @dataclass
@@ -551,6 +586,7 @@ class PoissonModelConfig:
         half_life_days: Vida media del peso temporal (partidos viejos pesan menos).
         xg_weight: Peso del xG frente a los goles reales en el objetivo (0-1).
         prior_sd: Desviación del prior gaussiano de fuerzas (regularización).
+        league_prior_sd: Prior de los coeficientes de fuerza por liga (multiliga).
         max_goals: Goles máximos por equipo en la matriz.
         dixon_coles: Si se aplica la corrección de marcadores bajos.
         min_matches: Partidos mínimos para entrenar.
@@ -559,6 +595,7 @@ class PoissonModelConfig:
     half_life_days: float = 240.0
     xg_weight: float = 0.4
     prior_sd: float = 0.6
+    league_prior_sd: float = 0.4
     max_goals: int = 10
     dixon_coles: bool = True
     min_matches: int = 30
@@ -587,6 +624,8 @@ class PoissonModel:
         self.mu: float = 0.0
         self.home_adv: float = 0.0
         self.rho: float = 0.0
+        self.team_leagues: dict[str, str] = {}
+        self.league_strength: dict[str, float] = {}
         self._fitted = False
         self._warned: set[str] = set()
 
@@ -595,13 +634,23 @@ class PoissonModel:
         """Indica si el modelo está entrenado."""
         return self._fitted
 
-    def fit(self, matches: pd.DataFrame, reference_date: pd.Timestamp | None = None) -> PoissonModel:
+    def fit(self, matches: pd.DataFrame, reference_date: pd.Timestamp | None = None,
+            team_leagues: Mapping[str, str] | None = None, warm_start: PoissonModel | None = None) -> PoissonModel:
         """Entrena el modelo.
+
+        Modo multiliga: si se pasa ``team_leagues`` (equipo → liga doméstica),
+        se estima además un coeficiente de fuerza por liga ``L``:
+        ``ataque_efectivo = ataque + L`` y ``defensa_efectiva = defensa − L``.
+        En partidos de la misma liga ``L`` se cancela; en los partidos entre
+        ligas (p. ej. Champions) es lo que permite comparar a los equipos.
 
         Args:
             matches: Partidos (se usan los finalizados).
             reference_date: Fecha respecto a la cual se calcula el decaimiento
                 (por defecto, el último partido).
+            team_leagues: Liga doméstica de cada equipo (opcional).
+            warm_start: Modelo previo cuyos parámetros sirven de punto de partida
+                (mismo óptimo, menos iteraciones; útil al reentrenar fecha a fecha).
 
         Returns:
             ``self``.
@@ -628,39 +677,63 @@ class PoissonModel:
         w = 0.5 ** (age / self.config.half_life_days)
         w = w / w.mean()
         ridge = 1.0 / (2 * self.config.prior_sd ** 2)
+        self.team_leagues = {str(k): str(v) for k, v in (team_leagues or {}).items()}
+        fitted_leagues = {self.team_leagues[t] for t in self.teams if t in self.team_leagues}
+        leagues = sorted(fitted_leagues | {"OTHER"}) if team_leagues else []
+        nl = len(leagues)
+        lg_idx = {lg: i for i, lg in enumerate(leagues)}
+        team_lg = np.array([lg_idx[self.team_leagues.get(t, "OTHER")] for t in self.teams], dtype=int) if nl else np.zeros(n, int)
+        lgh, lga = team_lg[hi], team_lg[ai]
+        ridge_l = 1.0 / (2 * self.config.league_prior_sd ** 2)
 
         def nll(theta: np.ndarray) -> tuple[float, np.ndarray]:
             mu, home = theta[0], theta[1]
-            att, dfn = theta[2:2 + n], theta[2 + n:]
-            log_lh = mu + home + att[hi] + dfn[ai]
-            log_la = mu + att[ai] + dfn[hi]
+            att, dfn = theta[2:2 + n], theta[2 + n:2 + 2 * n]
+            lstr = theta[2 + 2 * n:]
+            shift = (lstr[lgh] - lstr[lga]) if nl else 0.0
+            log_lh = mu + home + att[hi] + dfn[ai] + shift
+            log_la = mu + att[ai] + dfn[hi] - shift
             lh, la = np.exp(log_lh), np.exp(log_la)
             ll = np.sum(w * (yh * log_lh - lh + ya * log_la - la))
-            value = -ll + ridge * (att @ att + dfn @ dfn)
+            value = -ll + ridge * (att @ att + dfn @ dfn) + ridge_l * (lstr @ lstr)
             rh, ra = w * (yh - lh), w * (ya - la)
             grad = np.empty_like(theta)
             grad[0] = -(rh.sum() + ra.sum())
             grad[1] = -rh.sum()
             grad[2:2 + n] = -(np.bincount(hi, rh, n) + np.bincount(ai, ra, n)) + 2 * ridge * att
-            grad[2 + n:] = -(np.bincount(ai, rh, n) + np.bincount(hi, ra, n)) + 2 * ridge * dfn
+            grad[2 + n:2 + 2 * n] = -(np.bincount(ai, rh, n) + np.bincount(hi, ra, n)) + 2 * ridge * dfn
+            if nl:
+                d = rh - ra  # d(log_lh)/dL = +1 (liga local), d(log_la)/dL = −1
+                grad[2 + 2 * n:] = -(np.bincount(lgh, d, nl) - np.bincount(lga, d, nl)) + 2 * ridge_l * lstr
             return float(value), grad
 
-        theta0 = np.zeros(2 + 2 * n)
-        theta0[0] = np.log(max(np.mean(np.r_[yh, ya]), 0.1))
+        theta0 = np.zeros(2 + 2 * n + nl)
+        theta0[0] = float(np.log(max(float(np.mean(np.r_[yh, ya])), 0.1)))
         theta0[1] = 0.2
+        if warm_start is not None and warm_start.is_fitted and not nl:
+            theta0[0], theta0[1] = warm_start.mu, warm_start.home_adv
+            for t, i in idx.items():
+                theta0[2 + i] = warm_start.attack.get(t, 0.0)
+                theta0[2 + n + i] = warm_start.defense.get(t, 0.0)
         res = minimize(nll, theta0, jac=True, method="L-BFGS-B")
         if not np.all(np.isfinite(res.x)):
             raise RuntimeError(f"El ajuste de Poisson no convergió: {res.message}")
         if not res.success:
             logger.warning("Optimización de Poisson con aviso: %s", res.message)
         self.mu, self.home_adv = float(res.x[0]), float(res.x[1])
-        self.attack = {t: float(res.x[2 + i]) for t, i in idx.items()}
-        self.defense = {t: float(res.x[2 + n + i]) for t, i in idx.items()}
+        lvals = res.x[2 + 2 * n:]
+        self.league_strength = {lg: float(lvals[i]) for lg, i in lg_idx.items()}
+        offset = lvals[team_lg] if nl else np.zeros(n)
+        # Se guardan las fuerzas EFECTIVAS (con la liga incluida)
+        eff_att = res.x[2:2 + n] + offset
+        eff_def = res.x[2 + n:2 + 2 * n] - offset
+        self.attack = {t: float(eff_att[i]) for t, i in idx.items()}
+        self.defense = {t: float(eff_def[i]) for t, i in idx.items()}
 
         self.rho = 0.0
         if self.config.dixon_coles:
-            lh = np.exp(self.mu + self.home_adv + res.x[2 + hi] + res.x[2 + n + ai])
-            la = np.exp(self.mu + res.x[2 + ai] + res.x[2 + n + hi])
+            lh = np.exp(self.mu + self.home_adv + eff_att[hi] + eff_def[ai])
+            la = np.exp(self.mu + eff_att[ai] + eff_def[hi])
             x, y = goals_h.astype(int), goals_a.astype(int)
 
             def neg_tau_ll(rho: float) -> float:
@@ -677,11 +750,14 @@ class PoissonModel:
         return self
 
     def _strength(self, team: str) -> tuple[float, float]:
-        """Ataque y defensa de un equipo (0 = promedio si es desconocido)."""
-        if team not in self.attack and team not in self._warned:
+        """Ataque y defensa efectivos (equipo desconocido = promedio de su liga, o 0)."""
+        if team in self.attack:
+            return self.attack[team], self.defense[team]
+        if team not in self._warned:
             logger.warning("Equipo '%s' sin historial: se asume fuerza promedio", team)
             self._warned.add(team)
-        return self.attack.get(team, 0.0), self.defense.get(team, 0.0)
+        lg = self.league_strength.get(self.team_leagues.get(team, ""), 0.0)
+        return lg, -lg
 
     def expected_goals(self, home: str, away: str, neutral: bool = False) -> tuple[float, float]:
         """Goles esperados de cada equipo.
@@ -727,7 +803,9 @@ class PoissonModel:
         return mat / mat.sum()
 
     def predict(self, home: str, away: str, match_id: str = "", neutral: bool = False,
-                league: str = "", kickoff: pd.Timestamp | None = None) -> MatchPrediction:
+                league: str = "", kickoff: pd.Timestamp | None = None,
+                home_adj: TeamAdjustment = NEUTRAL_ADJUSTMENT,
+                away_adj: TeamAdjustment = NEUTRAL_ADJUSTMENT) -> MatchPrediction:
         """Predicción completa de un partido.
 
         Args:
@@ -737,11 +815,15 @@ class PoissonModel:
             neutral: Campo neutral.
             league: Liga.
             kickoff: Fecha/hora.
+            home_adj: Ajuste de contexto del local (p. ej. lesiones).
+            away_adj: Ajuste de contexto del visitante.
 
         Returns:
             :class:`MatchPrediction` con la matriz de marcadores.
         """
         lh, la = self.expected_goals(home, away, neutral)
+        lh *= home_adj.attack * away_adj.defense
+        la *= away_adj.attack * home_adj.defense
         return MatchPrediction(match_id or f"{home}-{away}", home, away, lh, la,
                                self.score_matrix(lh, la), league=league, kickoff=kickoff)
 
@@ -758,6 +840,29 @@ class PoissonModel:
                            "defense": [np.exp(self.defense[t]) for t in self.teams]})
         df["net"] = np.log(df["attack"]) - np.log(df["defense"])
         return df.sort_values("net", ascending=False).reset_index(drop=True)
+
+
+def infer_team_leagues(matches: pd.DataFrame, international: Sequence[str] = ()) -> dict[str, str]:
+    """Infiere la liga doméstica de cada equipo (la más frecuente fuera de torneos internacionales).
+
+    Args:
+        matches: Partidos de varias competiciones (columna ``league``).
+        international: Claves de competiciones internacionales a ignorar.
+
+    Returns:
+        Mapa ``equipo -> liga``; los equipos que solo juegan torneos
+        internacionales se asignan a ``"OTHER"``.
+    """
+    intl = set(international)
+    long = pd.concat([
+        matches[["home_team", "league"]].rename(columns={"home_team": "team"}),
+        matches[["away_team", "league"]].rename(columns={"away_team": "team"}),
+    ])
+    out: dict[str, str] = {}
+    for team, grp in long.groupby("team"):
+        domestic = grp.loc[~grp["league"].isin(intl), "league"]
+        out[str(team)] = str(domestic.mode().iloc[0]) if not domestic.empty else "OTHER"
+    return out
 
 
 # =============================================================================
@@ -806,7 +911,7 @@ class MLOutcomeModel:
                                          random_state=self.random_state, n_jobs=-1)
         else:
             clf = LogisticRegression(C=self.C, max_iter=2000)
-        return Pipeline([("impute", SimpleImputer(strategy="median")), ("scale", StandardScaler()), ("clf", clf)])
+        return Pipeline([("impute", SimpleImputer(strategy="median", keep_empty_features=True)), ("scale", StandardScaler()), ("clf", clf)])
 
     def fit(self, feature_df: pd.DataFrame) -> MLOutcomeModel:
         """Entrena los tres clasificadores.
@@ -892,8 +997,14 @@ class EnsemblePredictor:
 
     def predict(self, home: str, away: str, match_id: str = "", league: str = "",
                 kickoff: pd.Timestamp | None = None, season: int | None = None,
-                neutral: bool = False, features: Mapping[str, float] | None = None) -> MatchPrediction:
+                neutral: bool = False, features: Mapping[str, float] | None = None,
+                home_adj: TeamAdjustment = NEUTRAL_ADJUSTMENT,
+                away_adj: TeamAdjustment = NEUTRAL_ADJUSTMENT) -> MatchPrediction:
         """Predicción de un partido combinando modelos.
+
+        Los ajustes de contexto (lesiones) modifican las λ de Poisson. Como el
+        ML no conoce ese contexto, sus probabilidades se corrigen con la misma
+        razón ``P_poisson_ajustada / P_poisson_base`` y se renormalizan.
 
         Args:
             home: Local.
@@ -904,13 +1015,21 @@ class EnsemblePredictor:
             season: Temporada (para las features).
             neutral: Campo neutral.
             features: Features precalculadas (si no, se piden al ``feature_engineer``).
+            home_adj: Ajuste de contexto del local.
+            away_adj: Ajuste de contexto del visitante.
 
         Returns:
             Predicción con ``sources`` = {"poisson", "ml"} y ``overrides`` del ensamble.
         """
-        pred = self.poisson.predict(home, away, match_id, neutral, league, kickoff)
+        pred = self.poisson.predict(home, away, match_id, neutral, league, kickoff, home_adj, away_adj)
         poisson_probs = {s: pred.matrix_probability(s) for sels in ML_SELECTIONS.values() for s in sels}
         pred.sources["poisson"] = poisson_probs
+        adjusted = not (home_adj.is_neutral and away_adj.is_neutral)
+        ratio: dict[Selection, float] = {s: 1.0 for s in poisson_probs}
+        if adjusted:
+            base = self.poisson.predict(home, away, match_id, neutral, league, kickoff)
+            ratio = {s: p / max(base.matrix_probability(s), 1e-9) for s, p in poisson_probs.items()}
+            pred.sources["poisson_sin_ajuste"] = {s: base.matrix_probability(s) for s in poisson_probs}
         if self.ml is None or self.ml_weight == 0.0:
             return pred
         if features is None:
@@ -922,6 +1041,12 @@ class EnsemblePredictor:
         except (ValueError, KeyError) as exc:
             logger.warning("ML falló para %s vs %s (%s); se usa solo Poisson", home, away, exc)
             return pred
+        if adjusted:
+            corrected: dict[Selection, float] = {}
+            for sels in ML_SELECTIONS.values():
+                raw = np.array([ml_probs[s] * ratio[s] for s in sels])
+                corrected.update({s: float(v) for s, v in zip(sels, raw / raw.sum())})
+            ml_probs = corrected
         pred.sources["ml"] = ml_probs
         w = self.ml_weight
         for sels in ML_SELECTIONS.values():
@@ -964,5 +1089,5 @@ def evaluate_predictions(probs: np.ndarray, outcomes: np.ndarray) -> dict[str, f
 __all__ = [
     "EloRatingSystem", "EnsemblePredictor", "FEATURE_COLUMNS", "FeatureEngineer", "FormSummary", "H2HSummary",
     "HeuristicAnalyzer", "InsufficientDataError", "MLOutcomeModel", "MatchReport", "ModelNotFittedError",
-    "PoissonModel", "PoissonModelConfig", "TeamSnapshot", "evaluate_predictions", "Market",
+    "PoissonModel", "PoissonModelConfig", "TeamAdjustment", "infer_team_leagues", "NEUTRAL_ADJUSTMENT", "TeamSnapshot", "evaluate_predictions", "Market",
 ]
